@@ -27,7 +27,12 @@ static NSString *const kZHNAHandledKey = @"ZHNAHandled";
     if (request.URL == nil) return NO;
     if ([NSURLProtocol propertyForKey:kZHNAHandledKey inRequest:request] != nil) return NO;
     if (!ZHNAConfigRawBool(ZHNAKeyMaster)) return NO;
-    return ZHNAMatchURL(request.URL) != nil;
+    ZHNAURLVerdict *v = ZHNAMatchURL(request.URL);
+    if (v == nil) return NO;
+    // ZHNAActionNone：命中但放行，交给 JSON 清洗 / 界面兜底处理，
+    // 避免网络层返回 {} 误伤连续阅读等"广告与正常内容混在一起"的接口。
+    if (v.action == ZHNAActionNone) return NO;
+    return YES;
 }
 
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
