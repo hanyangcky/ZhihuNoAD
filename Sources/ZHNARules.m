@@ -36,28 +36,25 @@ static NSArray<ZHNACompiledRule *> *ZHNACompiledRules(void) {
             @[@"^https?://[^/]*\\.zhihu\\.com/.*/launch[-_]?ad", @(ZHNAActionEmptyJSON), @"开屏广告接口", ZHNAKeySplash],
             @[@"^https?://[^/]*\\.zhihu\\.com/fringe/ad", @(ZHNAActionEmptyJSON), @"角标广告", ZHNAKeySplash],
 
-            // ===== 通用商业化接口（覆盖面最大的一条）=====
-            @[@"^https?://[^/]*\\.zhihu\\.com/commercial_api/", @(ZHNAActionEmptyJSON), @"商业化接口", ZHNAKeyFeed],
-            @[@"^https?://[^/]*\\.zhihu\\.com/[^?]*/adx/", @(ZHNAActionEmptyJSON), @"广告交易接口", ZHNAKeyFeed],
-            @[@"^https?://[^/]*\\.zhihu\\.com/ad/", @(ZHNAActionEmptyJSON), @"广告接口", ZHNAKeyFeed],
+            // ===== 信息流广告（首页/热榜/想法里的推广条目）=====
+            // ⚠️ 关键修复（v1.1.1）：信息流与回答页这两条开关此前用网络层 EmptyJSON(返回{}) 拦截。
+            // 但知乎的"连续阅读 / 下滑加载下一个回答"数据流也经过 commercial_api / ad 等接口，
+            // 一刀切返回 {} 会让 App 以为没有下一页内容 → 连续阅读直接断掉（用户的控制变量测试已证实）。
+            // 改为【放行 + 第二道防线(JSON 清洗) + 界面兜底】处理这些广告：
+            //   真实内容正常返回，JSON 清洗只剔掉其中的广告条目，连续阅读不再被误伤。
+            // 若某条广告经 JSON 清洗/界面兜底仍漏网，再把对应规则改回 EmptyJSON 即可（并观察是否影响连续阅读）。
+            @[@"^https?://[^/]*\\.zhihu\\.com/commercial_api/", @(ZHNAActionNone), @"商业化接口", ZHNAKeyFeed],
+            @[@"^https?://[^/]*\\.zhihu\\.com/[^?]*/adx/", @(ZHNAActionNone), @"广告交易接口", ZHNAKeyFeed],
+            @[@"^https?://[^/]*\\.zhihu\\.com/ad/", @(ZHNAActionNone), @"广告接口", ZHNAKeyFeed],
 
             // ===== 回答/文章详情页推广 =====
-            // NOTE: 连续阅读(下滑加载下一个回答/文章)数据源接口全部不拦截，交第二道防线清洗：
-            //   next-{bff,data,render} 主接口  related-readings / recommendations
-            //   prague/related_suggestion_native/feed 详情页相关推荐流  v5.1/topics/answer/relation
-            @[@"^https?://[^/]*\\.zhihu\\.com/.*featured-comment-ad", @(ZHNAActionEmptyJSON), @"评论区精选广告", ZHNAKeyDetail],
-            @[@"^https?://[^/]*\\.zhihu\\.com/distribute/rhea/qa_ad_card/", @(ZHNAActionEmptyJSON), @"问答广告卡片", ZHNAKeyDetail],
-            @[@"^https?://[^/]*\\.zhihu\\.com/comment_v5/(articles|answers)/\\d+/list-headers", @(ZHNAActionEmptyJSON), @"评论区顶部推广", ZHNAKeyDetail],
-
-            // ⚠️ 连续阅读(下滑加载下一个回答/文章)的数据源一律【不拦截】，交给第二道防线清洗：
-            //   next-{bff,data,render} · related-readings · recommendations
-            //   · prague/related_suggestion_native/feed · v5.1/topics/answer/relation
-            // 上面 prague 与 v5.1 两条 EmptyJSON 已在本版(1.1.0)移除；若用 EmptyJSON 清空整条响应，
-            // 会导致点进某个回答后下滑就没有"下一个回答"。下面这三条仍是纯"详情页推广位"，
-            // 与连续阅读加载器无关，保留 EmptyJSON 拦截是安全的。
-            @[@"^https?://zhuanlan\\.zhihu\\.com/api/articles/\\d+/recommendation", @(ZHNAActionEmptyJSON), @"专栏文章推荐位", ZHNAKeyDetail],
-            @[@"^https?://[^/]*\\.zhihu\\.com/api/v4/mcn/v2/linkcards", @(ZHNAActionEmptyJSON), @"MCN 带货卡片", ZHNAKeyDetail],
-            @[@"^https?://[^/]*\\.zhihu\\.com/appview/api/[^/]+/recommendations", @(ZHNAActionEmptyJSON), @"内嵌页推荐位", ZHNAKeyDetail],
+            // 同样改为放行 + JSON 清洗，避免清空连续阅读(下滑加载下一个回答/文章)所依赖的响应。
+            @[@"^https?://[^/]*\\.zhihu\\.com/.*featured-comment-ad", @(ZHNAActionNone), @"评论区精选广告", ZHNAKeyDetail],
+            @[@"^https?://[^/]*\\.zhihu\\.com/distribute/rhea/qa_ad_card/", @(ZHNAActionNone), @"问答广告卡片", ZHNAKeyDetail],
+            @[@"^https?://[^/]*\\.zhihu\\.com/comment_v5/(articles|answers)/\\d+/list-headers", @(ZHNAActionNone), @"评论区顶部推广", ZHNAKeyDetail],
+            @[@"^https?://zhuanlan\\.zhihu\\.com/api/articles/\\d+/recommendation", @(ZHNAActionNone), @"专栏文章推荐位", ZHNAKeyDetail],
+            @[@"^https?://[^/]*\\.zhihu\\.com/api/v4/mcn/v2/linkcards", @(ZHNAActionNone), @"MCN 带货卡片", ZHNAKeyDetail],
+            @[@"^https?://[^/]*\\.zhihu\\.com/appview/api/[^/]+/recommendations", @(ZHNAActionNone), @"内嵌页推荐位", ZHNAKeyDetail],
 
             // ===== 搜索页 =====
             @[@"^https?://[^/]*\\.zhihu\\.com/search/(hot_search|preset_words)", @(ZHNAActionEmptyJSON), @"搜索热词/预置词", ZHNAKeySearch],
