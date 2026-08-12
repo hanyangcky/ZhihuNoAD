@@ -70,6 +70,11 @@ static NSArray<ZHNACompiledRule *> *ZHNACompiledRules(void) {
             @[@"^https?://[^/]*\\.zhihu\\.com/unlimited/go/my_card", @(ZHNAActionEmptyJSON), @"会员卡推广", ZHNAKeyPopup],
             @[@"^https?://appcloud2\\.zhihu\\.com/v3/resource\\?group_name=mp", @(ZHNAActionEmptyJSON), @"运营资源下发", ZHNAKeyPopup],
 
+            // ===== 来自用户 Shadowrocket 规则、上面未覆盖的几条（如不需要可自行删除）=====
+            @[@"^https?://[^/]*\\.zhihu\\.com/ecom_data/config", @(ZHNAActionEmptyJSON), @"推荐页顶部广告位", ZHNAKeyPopup],
+            @[@"^https?://[^/]*\\.zhihu\\.com/feed/render/revisit/", @(ZHNAActionEmptyJSON), @"搜索栏红点/左侧图标", ZHNAKeyPopup],
+            @[@"^https?://[^/]*\\.zhihu\\.com/v2/resolv", @(ZHNAActionDeny), @"广告解析请求", ZHNAKeyTracking],
+
             // ===== 埋点 / 崩溃上报 / 广告SDK =====
             @[@"^https?://(appcloud|appcloud2\\.in|crash2|sugar|mqtt)\\.zhihu\\.com/", @(ZHNAActionDeny), @"知乎埋点域名", ZHNAKeyTracking],
             @[@"^https?://zxid-m\\.mobileservice\\.cn/", @(ZHNAActionDeny), @"第三方标识服务", ZHNAKeyTracking],
