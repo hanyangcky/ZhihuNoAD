@@ -42,18 +42,19 @@ static NSArray<ZHNACompiledRule *> *ZHNACompiledRules(void) {
             @[@"^https?://[^/]*\\.zhihu\\.com/ad/", @(ZHNAActionEmptyJSON), @"广告接口", ZHNAKeyFeed],
 
             // ===== 回答/文章详情页推广 =====
+            // NOTE: 连续阅读(下滑加载下一个回答/文章)数据源接口全部不拦截，交第二道防线清洗：
+            //   next-{bff,data,render} 主接口  related-readings / recommendations
+            //   prague/related_suggestion_native/feed 详情页相关推荐流  v5.1/topics/answer/relation
             @[@"^https?://[^/]*\\.zhihu\\.com/.*featured-comment-ad", @(ZHNAActionEmptyJSON), @"评论区精选广告", ZHNAKeyDetail],
             @[@"^https?://[^/]*\\.zhihu\\.com/distribute/rhea/qa_ad_card/", @(ZHNAActionEmptyJSON), @"问答广告卡片", ZHNAKeyDetail],
             @[@"^https?://[^/]*\\.zhihu\\.com/comment_v5/(articles|answers)/\\d+/list-headers", @(ZHNAActionEmptyJSON), @"评论区顶部推广", ZHNAKeyDetail],
-            @[@"^https?://[^/]*\\.zhihu\\.com/prague/related_suggestion_native/feed", @(ZHNAActionEmptyJSON), @"相关推荐信息流", ZHNAKeyDetail],
-            @[@"^https?://[^/]*\\.zhihu\\.com/v5\\.1/topics/answer/\\d+/relation", @(ZHNAActionEmptyJSON), @"回答话题关联推广", ZHNAKeyDetail],
 
-            // ⚠️ 下面两个接口【故意不放行】——它们是知乎"连续阅读 / 下滑加载下一个回答"的数据源。
-            // 之前用 EmptyJSON 一刀切会清空整条响应，导致点进某个回答后下滑就没有下一个回答。
-            // 改为放行，让真实数据返回，由第二道防线(NSJSONSerialization 清洗)把其中的广告条目剔掉，
-            // 既恢复连续阅读，又保留去广告效果。
-            //   api/v4/(answers|questions)/\d+/related-readings
-            //   api/v4/(articles|answers)/\d+/recommendations?
+            // ⚠️ 连续阅读(下滑加载下一个回答/文章)的数据源一律【不拦截】，交给第二道防线清洗：
+            //   next-{bff,data,render} · related-readings · recommendations
+            //   · prague/related_suggestion_native/feed · v5.1/topics/answer/relation
+            // 上面 prague 与 v5.1 两条 EmptyJSON 已在本版(1.1.0)移除；若用 EmptyJSON 清空整条响应，
+            // 会导致点进某个回答后下滑就没有"下一个回答"。下面这三条仍是纯"详情页推广位"，
+            // 与连续阅读加载器无关，保留 EmptyJSON 拦截是安全的。
             @[@"^https?://zhuanlan\\.zhihu\\.com/api/articles/\\d+/recommendation", @(ZHNAActionEmptyJSON), @"专栏文章推荐位", ZHNAKeyDetail],
             @[@"^https?://[^/]*\\.zhihu\\.com/api/v4/mcn/v2/linkcards", @(ZHNAActionEmptyJSON), @"MCN 带货卡片", ZHNAKeyDetail],
             @[@"^https?://[^/]*\\.zhihu\\.com/appview/api/[^/]+/recommendations", @(ZHNAActionEmptyJSON), @"内嵌页推荐位", ZHNAKeyDetail],
