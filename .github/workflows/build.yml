@@ -1,0 +1,33 @@
+name: Build ZhihuNoAds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools (dpkg + ldid)
+        run: brew install dpkg ldid
+
+      - name: Ensure Xcode iPhoneOS SDK is available
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer 2>/dev/null || true
+
+      - name: Build dylib + deb (rootless, iOS 15+ / Dopamine)
+        run: |
+          make
+          make package
+
+      - name: Upload 成品 (dylib 给巨魔 / deb 给越狱)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZhihuNoAds-成品
+          path: |
+            build/ZhihuNoAds.dylib
+            build/ZhihuNoAds.deb
