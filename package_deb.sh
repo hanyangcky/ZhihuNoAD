@@ -7,7 +7,8 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$ROOT/build"
-DST="$ROOT/layout/Library/TweakInject"
+# rootless 布局：iOS 15+（含 iOS 16 / Dopamine）的注入目录是 /var/jb/Library/TweakInject
+DST="$ROOT/layout/var/jb/Library/TweakInject"
 
 mkdir -p "$DST"
 cp "$BUILD/ZhihuNoAds.dylib" "$DST/ZhihuNoAds.dylib"

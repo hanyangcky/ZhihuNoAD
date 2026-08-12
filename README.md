@@ -84,7 +84,7 @@
 3. 安装完成后，**重启知乎**（杀掉后台重新打开）。 deb 里的脚本会自动结束正在运行的知乎。
 4. 打开知乎验证效果。
 
-> deb 会把 `ZhihuNoAds.dylib` 放到注入目录（`/Library/TweakInject/`），并带上过滤规则，确保**只**在知乎里生效，不会影响到别的 App。
+> deb 会把 `ZhihuNoAds.dylib` 放到注入目录（`/var/jb/Library/TweakInject/`，**rootless 布局，适配 iOS 15+ / Dopamine**），并带上过滤规则，确保**只**在知乎里生效，不会影响到别的 App。
 
 ---
 
