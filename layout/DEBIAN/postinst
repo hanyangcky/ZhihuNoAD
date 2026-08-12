@@ -1,0 +1,6 @@
+#!/bin/bash
+# 安装后：如果知乎正在运行，结束它，让用户下次手动打开以加载插件。
+if killall -9 Zhihu 2>/dev/null; then
+    echo "已结束正在运行的知乎，请重新打开 App 使插件生效。"
+fi
+exit 0
