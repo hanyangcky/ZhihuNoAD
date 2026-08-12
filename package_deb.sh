@@ -15,6 +15,8 @@ cp "$BUILD/ZhihuNoAds.dylib" "$DST/ZhihuNoAds.dylib"
 cp "$ROOT/ZhihuNoAds.plist" "$DST/ZhihuNoAds.plist"
 
 mkdir -p "$ROOT/build"
+# dpkg 要求 DEBIAN/ 下所有脚本(control/postinst/prerm 等)必须可执行(0555-0775)
+chmod -R 0755 "$ROOT/layout/DEBIAN/" 2>/dev/null || true
 dpkg-deb --build --root-owner-group "$ROOT/layout" "$ROOT/build/ZhihuNoAds.deb"
 
 echo ""
