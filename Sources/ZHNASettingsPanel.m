@@ -10,13 +10,13 @@
 #import "ZHNAConfig.h"
 #import "ZHNASwizzle.h"
 
-#define ZHNA_MOTION_SHAKE 1        // UIEventSubtypeMotionShake
 #define ZHNA_ALERT_STYLE_ALERT 1   // UIAlertControllerStyleAlert
 #define ZHNA_ACTION_DEFAULT 0
 #define ZHNA_ACTION_CANCEL 1
 #define ZHNA_ACTION_DESTRUCTIVE 2
 
 static BOOL gPanelVisible = NO;
+static const void *kZHNALongPressKey = &kZHNALongPressKey;  // 挂在 keyWindow 上：是否已装双指长按
 
 #pragma mark - UIKit runtime 小工具
 
@@ -176,24 +176,13 @@ static void ZHNAShowMainPanel(id window) {
     ZHNAPresent(window, alert);
 }
 
-#pragma mark - 摇一摇钩子
+#pragma mark - 触发方式
 
-static void (*orig_motionEnded)(id, SEL, NSInteger, id) = NULL;
-static void new_motionEnded(id self, SEL _cmd, NSInteger motion, id event) {
-    if (orig_motionEnded) orig_motionEnded(self, _cmd, motion, event);
-    if (motion != ZHNA_MOTION_SHAKE) return;
-    if (gPanelVisible) return;
-    ZHNAShowMainPanel(self);
-}
+static void ZHNAInstallLongPress(void);
 
+/// 用双指长按呼出设置面板（替代摇一摇，误触概率低很多）
 void ZHNAInstallSettingsPanel(void) {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        ZHNASwizzleInstanceMethodNamed("UIWindow", "motionEnded:withEvent:",
-                                       (IMP)new_motionEnded,
-                                       (IMP *)&orig_motionEnded);
-        ZHNALog(@"设置面板已安装（摇一摇呼出）");
-    });
+    ZHNAInstallLongPress();
 }
 
 #pragma mark - 对外公开入口
@@ -225,4 +214,64 @@ void ZHNAOpenSettingsPanel(void) {
         return;
     }
     ZHNAShowMainPanel(window);
+}
+
+#pragma mark - 双指长按实现（替换摇一摇）
+
+// 仅响应手势开始那一刻（state == 1 == UIGestureRecognizerStateBegan），避免长按过程中重复触发
+static void zhna_onLongPress(id self, SEL _cmd, id gesture) {
+    NSInteger state = ((NSInteger (*)(id, SEL))objc_msgSend)(gesture, sel_registerName("state"));
+    if (state != 1) return;
+    ZHNAOpenSettingsPanel();
+}
+
+// 手势回调的目标对象：运行时动态建一个 NSObject 子类，避免链接 UIKit / 在头文件里写死方法
+static id ZHNALongPressTarget(void) {
+    static id target = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class base = ZHNAClass("NSObject");
+        if (base == Nil) return;
+        Class cls = objc_allocateClassPair(base, "ZHNALongPressTarget", 0);
+        class_addMethod(cls, sel_registerName("zhna_onLongPress:"),
+                        (IMP)zhna_onLongPress, "v@:@");
+        objc_registerClassPair(cls);
+        target = ((id (*)(id, SEL))objc_msgSend)(cls, sel_registerName("new"));
+    });
+    return target;
+}
+
+static void ZHNAInstallLongPress(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        @try {
+            id window = ZHNAKeyWindow();
+            if (window == nil) { ZHNALog(@"双指长按：取不到 keyWindow，跳过"); return; }
+            if (objc_getAssociatedObject(window, kZHNALongPressKey)) return;  // 已装过，幂等
+
+            id recogCls = ZHNAClass("UILongPressGestureRecognizer");
+            if (recogCls == Nil) return;
+            id recog = ((id (*)(id, SEL))objc_msgSend)(recogCls, sel_registerName("alloc"));
+            recog = ((id (*)(id, SEL))objc_msgSend)(recog, sel_registerName("init"));
+            if (recog == nil) return;
+
+            // 必须两个手指同时长按，把单指滑动/点按的误触概率压到最低
+            ((void (*)(id, SEL, NSInteger))objc_msgSend)(recog,
+                sel_registerName("setNumberOfTouchesRequired:"), 2);
+            // minimumPressDuration 默认 0.5s，足以区分正常操作
+
+            id target = ZHNALongPressTarget();
+            ((void (*)(id, SEL, id, SEL))objc_msgSend)(recog,
+                sel_registerName("addTarget:action:"), target,
+                sel_registerName("zhna_onLongPress:"));
+            ((void (*)(id, SEL, id))objc_msgSend)(window,
+                sel_registerName("addGestureRecognizer:"), recog);
+
+            objc_setAssociatedObject(window, kZHNALongPressKey, @"1",
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            ZHNALog(@"设置面板已安装（双指长按呼出，替换摇一摇）");
+        } @catch (NSException *e) {
+            ZHNALog(@"双指长按安装失败: %@", e);
+        }
+    });
 }
