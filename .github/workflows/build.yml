@@ -6,6 +6,9 @@ on:
     branches: [main]
     tags: ['v*']
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -23,14 +26,24 @@ jobs:
         id: build
         run: |
           make
-          VER=$(grep '^Version:' layout/DEBIAN/control | awk '{print $2}' | tr -d '\r')
+          # 版本号唯一来源：ZHNACommon.h 的 ZHNA_VERSION（与设置面板、启动日志完全一致）
+          VER=$(grep -oE 'ZHNA_VERSION @"[0-9]+\.[0-9]+\.[0-9]+"' Sources/ZHNACommon.h | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
           echo "VER=${VER}" >> "$GITHUB_OUTPUT"
+          echo "构建版本号 = ${VER}"
           cp build/ZhihuNoAds.dylib "build/ZhihuNoAds-${VER}.dylib"
           ls -la "build/ZhihuNoAds-${VER}.dylib"
 
-      - name: Upload dylib (巨魔 / TrollFools 注入用，文件名含版本号)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ZhihuNoAds-dylib
-          path: build/ZhihuNoAds-${{ steps.build.outputs.VER }}.dylib
-          if-no-files-found: error
+      - name: Publish uncompressed dylib (文件名即版本号，无压缩，直接下载)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          VER="${{ steps.build.outputs.VER }}"
+          ASSET="build/ZhihuNoAds-${VER}.dylib"
+          TAG="build-latest"
+          gh release delete "$TAG" --yes >/dev/null 2>&1 || true
+          gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/${TAG}" >/dev/null 2>&1 || true
+          gh release create "$TAG" "$ASSET" \
+            --title "ZhihuNoAds ${VER} (最新构建)" \
+            --notes "未压缩 dylib，文件名即版本号：**${VER}**。注入知乎后，设置面板顶部也应显示 v${VER}。" \
+            --prerelease
