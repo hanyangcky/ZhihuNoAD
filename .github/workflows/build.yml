@@ -20,14 +20,17 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer 2>/dev/null || true
 
       - name: Build dylib (rootless, iOS 14+ / Dopamine / TrollStore / TrollFools)
+        id: build
         run: |
           make
           VER=$(grep '^Version:' layout/DEBIAN/control | awk '{print $2}')
+          echo "VER=${VER}" >> "$GITHUB_OUTPUT"
           cp build/ZhihuNoAds.dylib "build/ZhihuNoAds-${VER}.dylib"
-          ls -la build/ZhihuNoAds-${VER}.dylib
+          ls -la "build/ZhihuNoAds-${VER}.dylib"
 
       - name: Upload dylib (巨魔 / TrollFools 注入用，文件名含版本号)
         uses: actions/upload-artifact@v4
         with:
           name: ZhihuNoAds-dylib
-          path: build/ZhihuNoAds-*.dylib
+          path: build/ZhihuNoAds-${{ steps.build.outputs.VER }}.dylib
+          if-no-files-found: error
