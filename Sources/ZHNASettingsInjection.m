@@ -219,20 +219,29 @@ static void ZHNAInjectIntoVC(id vc) {
         // data source 可能稍后才设，0.3s 后重试一次
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            id ds = ZHNA_CALL_ID(tableView, "dataSource");
-            if (ds) {
-                NSInteger sections = ZHNA_CALL_INT1(tableView, "numberOfSectionsInTableView:", tableView);
-                objc_setAssociatedObject(tableView, kZHNAInjectedTableKey,
-                                         @(sections), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                ZHNASwizzleTableIfNeeded(tableView);
-                dispatch_async(dispatch_get_main_queue(), ^{ ZHNA_CALL_ID(tableView, "reloadData"); });
+            @try {
+                id ds = ZHNA_CALL_ID(tableView, "dataSource");
+                if (ds) {
+                    // 注意：numberOfSectionsInTableView: 是 dataSource 的方法，
+                    // UITableView 自身不响应它；正确做法是对表本身调用无参的 numberOfSections。
+                    NSInteger sections = ZHNA_CALL_INT(tableView, "numberOfSections");
+                    objc_setAssociatedObject(tableView, kZHNAInjectedTableKey,
+                                             @(sections), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                    ZHNASwizzleTableIfNeeded(tableView);
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        @try { ZHNA_CALL_ID(tableView, "reloadData"); }
+                        @catch (__unused NSException *e) {}
+                    });
+                }
+            } @catch (__unused NSException *e) {
+                // 延迟注入出错绝不影响知乎本身
             }
             objc_setAssociatedObject(vc, kZHNAVCDoneKey, @(YES), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         });
         return;
     }
 
-    NSInteger sections = ZHNA_CALL_INT1(tableView, "numberOfSectionsInTableView:", tableView);
+    NSInteger sections = ZHNA_CALL_INT(tableView, "numberOfSections");
     // 我们的专属 section 放在现有 section 之后
     objc_setAssociatedObject(tableView, kZHNAInjectedTableKey,
                              @(sections), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
