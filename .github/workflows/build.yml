@@ -19,15 +19,15 @@ jobs:
       - name: Ensure Xcode iPhoneOS SDK is available
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer 2>/dev/null || true
 
-      - name: Build dylib + deb (rootless, iOS 15+ / Dopamine)
+      - name: Build dylib (rootless, iOS 14+ / Dopamine / TrollStore / TrollFools)
         run: |
           make
-          make package
+          VER=$(grep '^Version:' layout/DEBIAN/control | awk '{print $2}')
+          cp build/ZhihuNoAds.dylib "build/ZhihuNoAds-${VER}.dylib"
+          ls -la build/ZhihuNoAds-${VER}.dylib
 
-      - name: Upload 成品 (dylib 给巨魔 / deb 给越狱)
+      - name: Upload dylib (巨魔 / TrollFools 注入用，文件名含版本号)
         uses: actions/upload-artifact@v4
         with:
-          name: ZhihuNoAds-成品
-          path: |
-            build/ZhihuNoAds.dylib
-            build/ZhihuNoAds.deb
+          name: ZhihuNoAds-dylib
+          path: build/ZhihuNoAds-*.dylib
