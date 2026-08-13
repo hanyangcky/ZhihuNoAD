@@ -195,3 +195,34 @@ void ZHNAInstallSettingsPanel(void) {
         ZHNALog(@"设置面板已安装（摇一摇呼出）");
     });
 }
+
+#pragma mark - 对外公开入口
+
+static id ZHNAKeyWindow(void) {
+    Class appCls = ZHNAClass("UIApplication");
+    if (appCls == Nil) return nil;
+    id (*getApp)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+    id app = getApp(appCls, sel_registerName("sharedApplication"));
+    if (app == nil) return nil;
+
+    id (*getObj)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+    id keyWindow = getObj(app, sel_registerName("keyWindow"));
+    if (keyWindow != nil) return keyWindow;
+
+    // iOS 13+ keyWindow 可能取不到，退回 windows 列表最后一个
+    id windows = getObj(app, sel_registerName("windows"));
+    if (windows != nil && [windows respondsToSelector:@selector(lastObject)]) {
+        return [windows lastObject];
+    }
+    return nil;
+}
+
+void ZHNAOpenSettingsPanel(void) {
+    if (gPanelVisible) return;
+    id window = ZHNAKeyWindow();
+    if (window == nil) {
+        ZHNALog(@"呼出设置面板失败：取不到 keyWindow");
+        return;
+    }
+    ZHNAShowMainPanel(window);
+}
