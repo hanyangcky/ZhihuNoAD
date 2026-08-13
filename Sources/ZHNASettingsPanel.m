@@ -1,7 +1,7 @@
 //
 //  ZHNASettingsPanel.m
 //
-//  在知乎里"摇一摇手机"即可呼出设置面板。
+//  在知乎界面放一个可拖动的悬浮小圆钮，轻点即呼出设置面板。
 //  全部用 runtime 调用 UIKit，不产生 UIKit 链接依赖。
 //
 
@@ -178,11 +178,12 @@ static void ZHNAShowMainPanel(id window) {
 
 #pragma mark - 触发方式
 
-static void ZHNAInstallLongPress(void);
+static void ZHNAInstallFloatingButton(void);
 
-/// 用双指长按呼出设置面板（替代摇一摇，误触概率低很多）
+/// 在知乎界面放一个可拖动的小圆钮，轻点即呼出设置面板。
+/// 比手势可靠：不依赖手势识别、不和知乎自身滑动/长按冲突。
 void ZHNAInstallSettingsPanel(void) {
-    ZHNAInstallLongPress();
+    ZHNAInstallFloatingButton();
 }
 
 #pragma mark - 对外公开入口
@@ -216,62 +217,159 @@ void ZHNAOpenSettingsPanel(void) {
     ZHNAShowMainPanel(window);
 }
 
-#pragma mark - 双指长按实现（替换摇一摇）
+#pragma mark - 悬浮按钮（可拖动，轻点呼出设置面板）
 
-// 仅响应手势开始那一刻（state == 1 == UIGestureRecognizerStateBegan），避免长按过程中重复触发
-static void zhna_onLongPress(id self, SEL _cmd, id gesture) {
-    NSInteger state = ((NSInteger (*)(id, SEL))objc_msgSend)(gesture, sel_registerName("state"));
-    if (state != 1) return;
-    ZHNAOpenSettingsPanel();
+// 全局仅一个悬浮钮：用文件级静态记录拖动起点，不必挂关联对象
+static BOOL gFloatingInstalled = NO;
+static BOOL gFloatingRetryScheduled = NO;
+static CGPoint gBtnStartCenter;
+
+static id ZHNACString(const char *s) {
+    Class cls = ZHNAClass("NSString");
+    if (cls == Nil) return nil;
+    return ((id (*)(id, SEL, const char *))objc_msgSend)(cls,
+            sel_registerName("stringWithUTF8String:"), s);
 }
 
-// 手势回调的目标对象：运行时动态建一个 NSObject 子类，避免链接 UIKit / 在头文件里写死方法
-static id ZHNALongPressTarget(void) {
+static id ZHNAColor(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
+    Class cls = ZHNAClass("UIColor");
+    if (cls == Nil) return nil;
+    return ((id (*)(id, SEL, CGFloat, CGFloat, CGFloat, CGFloat))objc_msgSend)(
+        cls, sel_registerName("colorWithRed:green:blue:alpha:"), r, g, b, a);
+}
+
+static void ZHNASaveButtonCenter(CGPoint c) {
+    Class cls = ZHNAClass("NSUserDefaults");
+    if (cls == Nil) return;
+    id ud = objc_msgSend(cls, sel_registerName("standardUserDefaults"));
+    if (ud == nil) return;
+    id str = ((id (*)(id, SEL, id, double, double))objc_msgSend)(
+        ZHNAClass("NSString"), sel_registerName("stringWithFormat:"),
+        ZHNACString("%f,%f"), (double)c.x, (double)c.y);
+    objc_msgSend(ud, sel_registerName("setObject:forKey:"), str, ZHNACString("ZHNAFloatBtnCenter"));
+    objc_msgSend(ud, sel_registerName("synchronize"));
+}
+
+static CGPoint ZHNALoadButtonCenter(void) {
+    Class cls = ZHNAClass("NSUserDefaults");
+    if (cls == Nil) return (CGPoint){0, 0};
+    id ud = objc_msgSend(cls, sel_registerName("standardUserDefaults"));
+    if (ud == nil) return (CGPoint){0, 0};
+    id str = objc_msgSend(ud, sel_registerName("objectForKey:"), ZHNACString("ZHNAFloatBtnCenter"));
+    if (str == nil) return (CGPoint){0, 0};
+    id parts = objc_msgSend(str, sel_registerName("componentsSeparatedByString:"), ZHNACString(","));
+    if ((NSInteger)objc_msgSend(parts, sel_registerName("count")) != 2) return (CGPoint){0, 0};
+    id xstr = objc_msgSend(parts, sel_registerName("objectAtIndex:"), 0);
+    id ystr = objc_msgSend(parts, sel_registerName("objectAtIndex:"), 1);
+    CGFloat x = (CGFloat)((double (*)(id, SEL))objc_msgSend)(xstr, sel_registerName("doubleValue"));
+    CGFloat y = (CGFloat)((double (*)(id, SEL))objc_msgSend)(ystr, sel_registerName("doubleValue"));
+    return (CGPoint){x, y};
+}
+
+// 手势回调目标：运行时动态建 NSObject 子类，避免链接 UIKit / 写死方法
+static void zhna_onPan(id self, SEL _cmd, id gesture);
+
+static id ZHNAFloatingTarget(void) {
     static id target = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         Class base = ZHNAClass("NSObject");
         if (base == Nil) return;
-        Class cls = objc_allocateClassPair(base, "ZHNALongPressTarget", 0);
-        class_addMethod(cls, sel_registerName("zhna_onLongPress:"),
-                        (IMP)zhna_onLongPress, "v@:@");
+        Class cls = objc_allocateClassPair(base, "ZHNAFloatTarget", 0);
+        class_addMethod(cls, sel_registerName("zhna_onPan:"),
+                        (IMP)zhna_onPan, "v@:@");
         objc_registerClassPair(cls);
-        target = ((id (*)(id, SEL))objc_msgSend)(cls, sel_registerName("new"));
+        target = objc_msgSend(cls, sel_registerName("new"));
     });
     return target;
 }
 
-static void ZHNAInstallLongPress(void) {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        @try {
-            id window = ZHNAKeyWindow();
-            if (window == nil) { ZHNALog(@"双指长按：取不到 keyWindow，跳过"); return; }
-            if (objc_getAssociatedObject(window, kZHNALongPressKey)) return;  // 已装过，幂等
+static void zhna_onPan(id self, SEL _cmd, id gesture) {
+    NSInteger state = (NSInteger)objc_msgSend(gesture, sel_registerName("state"));
+    id btn = objc_msgSend(gesture, sel_registerName("view"));
+    if (btn == nil) return;
+    id window = ZHNAKeyWindow();
+    if (window == nil) window = objc_msgSend(btn, sel_registerName("superview"));
+    if (window == nil) return;
 
-            id recogCls = ZHNAClass("UILongPressGestureRecognizer");
-            if (recogCls == Nil) return;
-            id recog = ((id (*)(id, SEL))objc_msgSend)(recogCls, sel_registerName("alloc"));
-            recog = ((id (*)(id, SEL))objc_msgSend)(recog, sel_registerName("init"));
-            if (recog == nil) return;
+    if (state == 1) {                                   // Began：记下起点
+        gBtnStartCenter = ((CGPoint (*)(id, SEL))objc_msgSend)(btn, sel_registerName("center"));
+    } else if (state == 2) {                            // Changed：跟随手指拖动
+        CGPoint t = ((CGPoint (*)(id, SEL, id))objc_msgSend)(gesture,
+                     sel_registerName("translationInView:"), window);
+        CGPoint nc = (CGPoint){ gBtnStartCenter.x + t.x, gBtnStartCenter.y + t.y };
+        CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
+        CGFloat half = 22;
+        if (nc.x < half) nc.x = half;
+        if (nc.x > b.size.width - half) nc.x = b.size.width - half;
+        if (nc.y < half) nc.y = half;
+        if (nc.y > b.size.height - half) nc.y = b.size.height - half;
+        ((void (*)(id, SEL, CGPoint))objc_msgSend)(btn, sel_registerName("setCenter:"), nc);
+        objc_msgSend(window, sel_registerName("bringSubviewToFront:"), btn);
+    } else if (state == 3 || state == 4) {             // Ended / Cancelled
+        CGPoint t = ((CGPoint (*)(id, SEL, id))objc_msgSend)(gesture,
+                     sel_registerName("translationInView:"), window);
+        // 用平方距离判断，避免引入 <math.h>
+        if (t.x * t.x + t.y * t.y < 100) ZHNAOpenSettingsPanel();   // 几乎没动 = 轻点
+        CGPoint c = ((CGPoint (*)(id, SEL))objc_msgSend)(btn, sel_registerName("center"));
+        ZHNASaveButtonCenter(c);                        // 记住位置
+    }
+}
 
-            // 必须两个手指同时长按，把单指滑动/点按的误触概率压到最低
-            ((void (*)(id, SEL, NSInteger))objc_msgSend)(recog,
-                sel_registerName("setNumberOfTouchesRequired:"), 2);
-            // minimumPressDuration 默认 0.5s，足以区分正常操作
-
-            id target = ZHNALongPressTarget();
-            ((void (*)(id, SEL, id, SEL))objc_msgSend)(recog,
-                sel_registerName("addTarget:action:"), target,
-                sel_registerName("zhna_onLongPress:"));
-            ((void (*)(id, SEL, id))objc_msgSend)(window,
-                sel_registerName("addGestureRecognizer:"), recog);
-
-            objc_setAssociatedObject(window, kZHNALongPressKey, @"1",
-                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            ZHNALog(@"设置面板已安装（双指长按呼出，替换摇一摇）");
-        } @catch (NSException *e) {
-            ZHNALog(@"双指长按安装失败: %@", e);
+static void ZHNAInstallFloatingButton(void) {
+    if (gFloatingInstalled) return;
+    id window = ZHNAKeyWindow();
+    if (window == nil) {
+        // 启动早期 keyWindow 可能还没就绪：延迟重试（用标志位避免堆叠）
+        if (!gFloatingRetryScheduled) {
+            gFloatingRetryScheduled = YES;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                gFloatingRetryScheduled = NO;
+                ZHNAInstallFloatingButton();
+            });
         }
-    });
+        return;
+    }
+    @try {
+        Class btnCls = ZHNAClass("UIButton");
+        if (btnCls == Nil) return;
+        id btn = objc_msgSend(btnCls, sel_registerName("new"));
+        if (btn == nil) return;
+
+        objc_msgSend(btn, sel_registerName("setTitle:forState:"), ZHNACString("去"), 0);
+        objc_msgSend(btn, sel_registerName("setTitleColor:forState:"), ZHNAColor(1, 1, 1, 1), 0);
+        objc_msgSend(btn, sel_registerName("setBackgroundColor:"), ZHNAColor(0.08, 0.08, 0.08, 0.55));
+        objc_msgSend(btn, sel_registerName("setUserInteractionEnabled:"), (BOOL)YES);
+        objc_msgSend(btn, sel_registerName("setClipsToBounds:"), (BOOL)YES);
+
+        CGFloat size = 44;
+        ((void (*)(id, SEL, CGRect))objc_msgSend)(btn, sel_registerName("setFrame:"),
+                                                  (CGRect){{0, 0}, {size, size}});
+        id layer = objc_msgSend(btn, sel_registerName("layer"));
+        objc_msgSend(layer, sel_registerName("setCornerRadius:"), (CGFloat)(size / 2));
+        objc_msgSend(layer, sel_registerName("setMasksToBounds:"), (BOOL)YES);
+
+        // 位置：上次拖到的地方；没有则默认贴右侧中部
+        CGPoint c = ZHNALoadButtonCenter();
+        if (c.x <= 0 || c.y <= 0) {
+            CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(window, sel_registerName("bounds"));
+            c = (CGPoint){ b.size.width - size / 2 - 8, b.size.height / 2 };
+        }
+        ((void (*)(id, SEL, CGPoint))objc_msgSend)(btn, sel_registerName("setCenter:"), c);
+
+        Class panCls = ZHNAClass("UIPanGestureRecognizer");
+        id pan = objc_msgSend(panCls, sel_registerName("new"));
+        objc_msgSend(pan, sel_registerName("addTarget:action:"),
+                     ZHNAFloatingTarget(), sel_registerName("zhna_onPan:"));
+        objc_msgSend(btn, sel_registerName("addGestureRecognizer:"), pan);
+
+        objc_msgSend(window, sel_registerName("addSubview:"), btn);
+        objc_msgSend(window, sel_registerName("bringSubviewToFront:"), btn);
+
+        gFloatingInstalled = YES;
+        ZHNALog(@"悬浮按钮已安装（轻点呼出设置，可拖动，位置已记忆）");
+    } @catch (NSException *e) {
+        ZHNALog(@"悬浮按钮安装失败: %@", e);
+    }
 }
