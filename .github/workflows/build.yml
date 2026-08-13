@@ -23,7 +23,7 @@ jobs:
         id: build
         run: |
           make
-          VER=$(grep '^Version:' layout/DEBIAN/control | awk '{print $2}')
+          VER=$(grep '^Version:' layout/DEBIAN/control | awk '{print $2}' | tr -d '\r')
           echo "VER=${VER}" >> "$GITHUB_OUTPUT"
           cp build/ZhihuNoAds.dylib "build/ZhihuNoAds-${VER}.dylib"
           ls -la "build/ZhihuNoAds-${VER}.dylib"
