@@ -275,8 +275,8 @@ static CGPoint ZHNALoadButtonCenter(void) {
     if (str == nil) return (CGPoint){0, 0};
     id parts = ZHNASend1(str, sel_registerName("componentsSeparatedByString:"), ZHNACString(","));
     if (ZHNAInt0(parts, sel_registerName("count")) != 2) return (CGPoint){0, 0};
-    id xstr = ZHNASend1(parts, sel_registerName("objectAtIndex:"), 0);
-    id ystr = ZHNASend1(parts, sel_registerName("objectAtIndex:"), 1);
+    id xstr = ((id (*)(id, SEL, NSInteger))objc_msgSend)(parts, sel_registerName("objectAtIndex:"), 0);
+    id ystr = ((id (*)(id, SEL, NSInteger))objc_msgSend)(parts, sel_registerName("objectAtIndex:"), 1);
     CGFloat x = (CGFloat)ZHNADouble0(xstr, sel_registerName("doubleValue"));
     CGFloat y = (CGFloat)ZHNADouble0(ystr, sel_registerName("doubleValue"));
     return (CGPoint){x, y};
