@@ -283,6 +283,15 @@ static CGPoint ZHNALoadButtonCenter(void) {
 }
 
 static void zhna_onPan(id self, SEL _cmd, id gesture);
+static void zhna_onTap(id self, SEL _cmd, id gesture);
+
+static void zhna_onTap(id self, SEL _cmd, id gesture) {
+    @try {
+        ZHNAOpenSettingsPanel();
+    } @catch (NSException *e) {
+        ZHNALog(@"悬浮按钮轻点失败: %@", e);
+    }
+}
 
 static id ZHNAFloatingTarget(void) {
     static id target = nil;
@@ -293,6 +302,8 @@ static id ZHNAFloatingTarget(void) {
         Class cls = objc_allocateClassPair(base, "ZHNAFloatTarget", 0);
         class_addMethod(cls, sel_registerName("zhna_onPan:"),
                         (IMP)zhna_onPan, "v@:@");
+        class_addMethod(cls, sel_registerName("zhna_onTap:"),
+                        (IMP)zhna_onTap, "v@:@");
         objc_registerClassPair(cls);
         target = ZHNASend0(cls, sel_registerName("new"));
     });
@@ -313,7 +324,7 @@ static void zhna_onPan(id self, SEL _cmd, id gesture) {
         CGPoint t = ZHNAGetPoint1(gesture, sel_registerName("translationInView:"), window);
         CGPoint nc = (CGPoint){ gBtnStartCenter.x + t.x, gBtnStartCenter.y + t.y };
         CGRect b = ZHNAGetRect(window, sel_registerName("bounds"));
-        CGFloat half = 22;
+        CGFloat half = 24;
         if (nc.x < half) nc.x = half;
         if (nc.x > b.size.width - half) nc.x = b.size.width - half;
         if (nc.y < half) nc.y = half;
@@ -322,9 +333,12 @@ static void zhna_onPan(id self, SEL _cmd, id gesture) {
         ZHNAVoid1(window, sel_registerName("bringSubviewToFront:"), btn);
     } else if (state == 3 || state == 4) {
         CGPoint t = ZHNAGetPoint1(gesture, sel_registerName("translationInView:"), window);
-        if (t.x * t.x + t.y * t.y < 100) ZHNAOpenSettingsPanel();
         CGPoint c = ZHNAGetPoint(btn, sel_registerName("center"));
-        ZHNASaveButtonCenter(c);
+        if (t.x * t.x + t.y * t.y > 400) {
+            ZHNASaveButtonCenter(c);   // 拖动：仅记忆位置
+        } else {
+            ZHNAOpenSettingsPanel();   // 位移极小：按轻点兜底
+        }
     }
 }
 
@@ -354,7 +368,7 @@ static void ZHNAInstallFloatingButton(void) {
         ZHNAVoidB(btn, sel_registerName("setUserInteractionEnabled:"), (BOOL)YES);
         ZHNAVoidB(btn, sel_registerName("setClipsToBounds:"), (BOOL)YES);
 
-        CGFloat size = 44;
+        CGFloat size = 48;
         ZHNASetRect(btn, sel_registerName("setFrame:"), (CGRect){{0, 0}, {size, size}});
         id layer = ZHNASend0(btn, sel_registerName("layer"));
         ZHNAVoidF(layer, sel_registerName("setCornerRadius:"), (CGFloat)(size / 2));
@@ -372,6 +386,14 @@ static void ZHNAInstallFloatingButton(void) {
         ((void (*)(id, SEL, id, SEL))objc_msgSend)(pan, sel_registerName("addTarget:action:"),
                   ZHNAFloatingTarget(), sel_registerName("zhna_onPan:"));
         ZHNAVoid1(btn, sel_registerName("addGestureRecognizer:"), pan);
+
+        // 独立的轻点识别器：pan 在纯轻点时会进入 Failed 状态而不回调，
+        // 导致“要点很多次”，因此轻点单独用 tap 识别器，最稳。
+        Class tapCls = ZHNAClass("UITapGestureRecognizer");
+        id tap = ZHNASend0(tapCls, sel_registerName("new"));
+        ((void (*)(id, SEL, id, SEL))objc_msgSend)(tap, sel_registerName("addTarget:action:"),
+                  ZHNAFloatingTarget(), sel_registerName("zhna_onTap:"));
+        ZHNAVoid1(btn, sel_registerName("addGestureRecognizer:"), tap);
 
         ZHNAVoid1(window, sel_registerName("addSubview:"), btn);
         ZHNAVoid1(window, sel_registerName("bringSubviewToFront:"), btn);
