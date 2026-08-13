@@ -8,7 +8,6 @@
 #import "ZHNANetworkGuard.h"
 #import "ZHNAUIGuard.h"
 #import "ZHNASettingsPanel.h"
-#import "ZHNASettingsInjection.h"
 
 /// 只在知乎里生效。哪怕被误注入到别的 App，也什么都不做。
 static BOOL ZHNAShouldActivate(void) {
@@ -29,8 +28,7 @@ static BOOL ZHNAShouldActivate(void) {
 static void ZHNAInstallUILayers(void) {
     if (ZHNAClass("UIView") == Nil) return;   // UIKit 还没加载，等通知
     ZHNAInstallUIGuard();
-    ZHNAInstallSettingsPanel();
-    ZHNAInstallSettingsInjection();   // 在知乎"设置"页插入一行入口，替代容易误触的摇一摇
+    ZHNAInstallSettingsPanel();   // 双指长按呼出设置面板
 }
 
 /// 进程级幂等锁：即使 dylib 被加载两次（例如同时存在于两个注入目录），也只初始化一次，
