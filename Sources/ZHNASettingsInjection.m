@@ -42,8 +42,9 @@ static void ZHNAStoreOrig(Class cls, NSString *sel, IMP imp) {
 
 #pragma mark - UIKit runtime 小工具
 
-// 调用任意 UIKit 实例方法（返回 id）
-#define ZHNA_CALL_ID(OBJ, SELSTR) objc_msgSend((OBJ), sel_registerName(SELSTR))
+// 调用任意 UIKit 实例方法（返回 id）。必须走函数指针强转，不能直接 call objc_msgSend，
+// 否则新 SDK 会报 "too many arguments / expected 0"。
+#define ZHNA_CALL_ID(OBJ, SELSTR) ((id(*)(id, SEL))objc_msgSend)((OBJ), sel_registerName(SELSTR))
 // 调用返回 NSInteger 的 UIKit 实例方法（无额外参数）
 #define ZHNA_CALL_INT(OBJ, SELSTR) ((NSInteger(*)(id, SEL))objc_msgSend)((OBJ), sel_registerName(SELSTR))
 // 调用返回 NSInteger、带一个 id 参数的 UIKit 实例方法
