@@ -348,8 +348,8 @@ static void ZHNAInstallFloatingButton(void) {
         id btn = ZHNASend0(btnCls, sel_registerName("new"));
         if (btn == nil) return;
 
-        ZHNAVoid2(btn, sel_registerName("setTitle:forState:"), ZHNACString("去"), 0);
-        ZHNAVoid2(btn, sel_registerName("setTitleColor:forState:"), ZHNAColor(1, 1, 1, 1), 0);
+        ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(btn, sel_registerName("setTitle:forState:"), ZHNACString("去"), 0);
+        ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(btn, sel_registerName("setTitleColor:forState:"), ZHNAColor(1, 1, 1, 1), 0);
         ZHNAVoid1(btn, sel_registerName("setBackgroundColor:"), ZHNAColor(0.08, 0.08, 0.08, 0.55));
         ZHNAVoidB(btn, sel_registerName("setUserInteractionEnabled:"), (BOOL)YES);
         ZHNAVoidB(btn, sel_registerName("setClipsToBounds:"), (BOOL)YES);
@@ -369,7 +369,7 @@ static void ZHNAInstallFloatingButton(void) {
 
         Class panCls = ZHNAClass("UIPanGestureRecognizer");
         id pan = ZHNASend0(panCls, sel_registerName("new"));
-        ZHNAVoid2(pan, sel_registerName("addTarget:action:"),
+        ((void (*)(id, SEL, id, SEL))objc_msgSend)(pan, sel_registerName("addTarget:action:"),
                   ZHNAFloatingTarget(), sel_registerName("zhna_onPan:"));
         ZHNAVoid1(btn, sel_registerName("addGestureRecognizer:"), pan);
 
