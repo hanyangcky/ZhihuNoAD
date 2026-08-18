@@ -683,7 +683,7 @@ static void ZHNAInstallFloatingButton(void) {
         Class scCls  = ZHNAClass("UIScreen");
         if (winCls != Nil && scCls != Nil) {
             id sc = ZS0(scCls, sel_registerName("mainScreen"));
-            id b  = ZGR(sc, sel_registerName("bounds"));
+            CGRect b = ZGR(sc, sel_registerName("bounds"));
             id win = ZS0(winCls, sel_registerName("alloc"));
             win = ZSI(win, sel_registerName("initWithFrame:"), b);
             if (win != nil) {
