@@ -39,6 +39,7 @@ static id   gToggleScrollView   = nil;    // 开关区域滚动视图
 static BOOL gFloatingInstalled     = NO;
 static BOOL gFloatingRetryScheduled = NO;
 static CGPoint gBtnStartCenter;
+static id   gFloatWindow        = nil;   // 悬浮钮专属浮层窗口（独立 windowLevel，永不被知乎界面覆盖/替换）
 
 // Associated Object keys
 static const void *kZHNAConfigKeyAssoc = &kZHNAConfigKeyAssoc;
@@ -57,6 +58,7 @@ static inline void ZVF(id o, SEL s, CGFloat f) { ((void (*)(id, SEL, CGFloat))ob
 static inline void ZVI(id o, SEL s, NSInteger i) { ((void (*)(id, SEL, NSInteger))objc_msgSend)(o, s, i); }
 static inline void ZVP(id o, SEL s, CGPoint p) { ((void (*)(id, SEL, CGPoint))objc_msgSend)(o, s, p); }
 static inline void ZVR(id o, SEL s, CGRect r) { ((void (*)(id, SEL, CGRect))objc_msgSend)(o, s, r); }
+static inline id   ZSI(id o, SEL s, CGRect r) { return ((id (*)(id, SEL, CGRect))objc_msgSend)(o, s, r); }
 static inline CGPoint ZGP(id o, SEL s) { return ((CGPoint (*)(id, SEL))objc_msgSend)(o, s); }
 static inline CGPoint ZGP1(id o, SEL s, id a) { return ((CGPoint (*)(id, SEL, id))objc_msgSend)(o, s, a); }
 static inline CGRect ZGR(id o, SEL s) { return ((CGRect (*)(id, SEL))objc_msgSend)(o, s); }
@@ -187,6 +189,7 @@ static void zhna_dismissPanel(void) {
                 gOverlayView = nil;
                 gCardView = nil;
                 gToggleScrollView = nil;
+                if (gFloatWindow) ZVB(gFloatWindow, sel_registerName("setHidden:"), NO);
                 gPanelVisible = NO;
             };
             // UIView animateWithDuration:animations:completion:
@@ -196,6 +199,7 @@ static void zhna_dismissPanel(void) {
         } else {
             [gOverlayView removeFromSuperview];
             gOverlayView = nil; gCardView = nil; gToggleScrollView = nil;
+            if (gFloatWindow) ZVB(gFloatWindow, sel_registerName("setHidden:"), NO);
             gPanelVisible = NO;
         }
     } @catch (NSException *e) {
@@ -572,6 +576,7 @@ void ZHNAOpenSettingsPanel(void) {
         ZHNALog(@"呼出设置面板失败：取不到 keyWindow");
         return;
     }
+    if (gFloatWindow) ZVB(gFloatWindow, sel_registerName("setHidden:"), YES);
     ZHNABuildAndShowPanel(window);
 }
 
@@ -640,7 +645,7 @@ static void zhna_onPan(id self, SEL _cmd, id gesture) {
     NSInteger state = ZGI(gesture, sel_registerName("state"));
     id btn = ZS0(gesture, sel_registerName("view"));
     if (btn == nil) return;
-    id window = ZHNAKeyWindow();
+    id window = (gFloatWindow != nil) ? gFloatWindow : ZHNAKeyWindow();
     if (window == nil) window = ZS0(btn, sel_registerName("superview"));
     if (window == nil) return;
 
@@ -670,8 +675,28 @@ static void zhna_onPan(id self, SEL _cmd, id gesture) {
 
 static void ZHNAInstallFloatingButton(void) {
     if (gFloatingInstalled) return;
-    id window = ZHNAKeyWindow();
-    if (window == nil) {
+
+    // 首次：创建一枚独立的浮层窗口（windowLevel 高于 alert），彻底脱离知乎的 window 层级。
+    // 这样无论知乎怎么切页 / 换 window / 弹全屏容器，按钮都不会被盖住或脱离可见窗口。
+    if (gFloatWindow == nil) {
+        Class winCls = ZHNAClass("UIWindow");
+        Class scCls  = ZHNAClass("UIScreen");
+        if (winCls != Nil && scCls != Nil) {
+            id sc = ZS0(scCls, sel_registerName("mainScreen"));
+            id b  = ZGR(sc, sel_registerName("bounds"));
+            id win = ZS0(winCls, sel_registerName("alloc"));
+            win = ZSI(win, sel_registerName("initWithFrame:"), b);
+            if (win != nil) {
+                ZVF(win, sel_registerName("setWindowLevel:"), (CGFloat)(2001.0)); // > UIWindowLevelAlert(2000)
+                ZVB(win, sel_registerName("setHidden:"), NO);
+                ZV1(win, sel_registerName("setBackgroundColor:"), ZColor(0, 0, 0, 0));
+                gFloatWindow = win;
+            }
+        }
+    }
+
+    id hostWindow = (gFloatWindow != nil) ? gFloatWindow : ZHNAKeyWindow();
+    if (hostWindow == nil) {
         if (!gFloatingRetryScheduled) {
             gFloatingRetryScheduled = YES;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
@@ -682,6 +707,7 @@ static void ZHNAInstallFloatingButton(void) {
         }
         return;
     }
+
     @try {
         Class btnCls = ZHNAClass("UIButton");
         if (btnCls == Nil) return;
@@ -700,10 +726,10 @@ static void ZHNAInstallFloatingButton(void) {
         ZVF(layer, sel_registerName("setCornerRadius:"), (CGFloat)(size / 2));
         ZVB(layer, sel_registerName("setMasksToBounds:"), YES);
 
+        CGRect sb = ZGR(ZS0(ZHNAClass("UIScreen"), sel_registerName("mainScreen")), sel_registerName("bounds"));
         CGPoint c = ZHNALoadButtonCenter();
         if (c.x <= 0 || c.y <= 0) {
-            CGRect b = ZGR(window, sel_registerName("bounds"));
-            c = (CGPoint){ b.size.width - size / 2 - 8, b.size.height / 2 };
+            c = (CGPoint){ sb.size.width - size / 2 - 8, sb.size.height / 2 };
         }
         ZVP(btn, sel_registerName("setCenter:"), c);
 
@@ -719,11 +745,11 @@ static void ZHNAInstallFloatingButton(void) {
                   ZHNAFloatingTarget(), sel_registerName("zhna_onTap:"));
         ZV1(btn, sel_registerName("addGestureRecognizer:"), tap);
 
-        ZV1(window, sel_registerName("addSubview:"), btn);
-        ZV1(window, sel_registerName("bringSubviewToFront:"), btn);
+        ZV1(hostWindow, sel_registerName("addSubview:"), btn);
+        ZV1(hostWindow, sel_registerName("bringSubviewToFront:"), btn);
 
         gFloatingInstalled = YES;
-        ZHNALog(@"悬浮按钮已安装（轻点呼出设置，可拖动，位置已记忆）");
+        ZHNALog(@"悬浮按钮已安装（独立浮层窗口，永不被覆盖；轻点呼出设置，可拖动）");
     } @catch (NSException *e) {
         ZHNALog(@"悬浮按钮安装失败: %@", e);
     }
