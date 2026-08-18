@@ -15,7 +15,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-#define ZHNA_VERSION @"1.1.10"
+#define ZHNA_VERSION @"1.1.11"
 #define ZHNA_DISPLAY_NAME @"知乎去广告"
 
 #pragma mark - 日志
