@@ -1,6 +1,6 @@
 Package: com.zhna.zhihunoads
 Name: 知乎去广告 (ZhihuNoAds)
-Version: 1.1.7
+Version: 1.1.8
 Architecture: iphoneos-arm64
 Description: 知乎 iOS 去广告插件 —— 拦截开屏广告、信息流广告、回答/文章页广告与会员推广弹窗；兼容 iOS 16 越狱与巨魔(TrollStore)注入。无需依赖 CydiaSubstrate。
 Maintainer: ZhihuNoAds <noreply@example.com>
