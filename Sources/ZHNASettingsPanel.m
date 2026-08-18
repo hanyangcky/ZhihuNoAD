@@ -97,6 +97,11 @@ static id ZHNAKeyWindow(void) {
     return nil;
 }
 
+static void zhna_dismissPanel(void);
+static void ZHNAShowToast(id window, NSString *msg);
+static void ZHNAShowStatsPanel(id window);
+static void ZHNAInstallFloatingButton(void);
+
 #pragma mark - 摇一摇广告拦截（MotionGuard）
 
 static void (*gOrigSendEvent)(id, SEL, id);
@@ -502,17 +507,20 @@ static void ZHNAShowToast(id window, NSString *msg) {
         ZVB(tLayer, sel_registerName("setMasksToBounds:"), YES);
 
         id tLbl = ZHNAMakeLabel(msg, 13, NO, ZColor(1, 1, 1, 1));
-        tLbl = ZS1(tLbl, sel_registerName("initWithFrame:"), (CGRect){{8, 0}, {tw - 16, 44}});  // re-create with frame
+        // 先释放 ZS0 new 出来的空标签，再用 initWithFrame 重新创建
+    [tLbl removeFromSuperview];
+    Class lblCls2 = ZHNAClass("UILabel");
+    tLbl = ((id (*)(id, SEL, CGRect))objc_msgSend)(lblCls2, sel_registerName("initWithFrame:"), (CGRect){{8, 0}, {tw - 16, 44}});  // re-create with frame
         // Actually let's just create fresh
         Class lblCls = ZHNAClass("UILabel");
         tLbl = ZS0(lblCls, sel_registerName("new"));
         ZVR(tLbl, sel_registerName("frame:"), (CGRect){{8, 0}, {tw - 16, 44}});
         ZV1(tLbl, sel_registerName("setText:"), msg);
         ZV1(tLbl, sel_registerName("setTextColor:"), ZColor(1, 1, 1, 1));
-        ZV1(tLbl, sel_registerName("setTextAlignment:"), 1);  // NSTextAlignmentCenter
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(tLbl, sel_registerName("setTextAlignment:"), (NSInteger)1);  // NSTextAlignmentCenter
         id tf = ZFont(13, NO);
         if (tf) ZV1(tLbl, sel_registerName("setFont:"), tf);
-        ZV1(tLbl, sel_registerName("numberOfLines:"), 0);
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(tLbl, sel_registerName("numberOfLines:"), (NSInteger)0);
         ZV1(toast, sel_registerName("addSubview:"), tLbl);
 
         ZV1(window, sel_registerName("addSubview:"), toast);
