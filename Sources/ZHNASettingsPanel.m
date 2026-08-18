@@ -317,7 +317,7 @@ static void ZHNABuildAndShowPanel(id window) {
         // ---- 1. 半透明遮罩 ----
         Class viewCls = ZHNAClass("UIView");
         id overlay = ZS0(viewCls, sel_registerName("new"));
-        ZVR(overlay, sel_registerName("frame:"), screenBounds);
+        ZVR(overlay, sel_registerName("setFrame:"), screenBounds);
         ZV1(overlay, sel_registerName("setBackgroundColor:"), ZColor(0, 0, 0, 0.35));
         ZVB(overlay, sel_registerName("setUserInteractionEnabled:"), YES);
 
@@ -339,7 +339,7 @@ static void ZHNABuildAndShowPanel(id window) {
         id card = ZS0(viewCls, sel_registerName("new"));
         CGFloat cardX = (screenW - cardW) / 2.0;
         CGFloat cardY = (screenH - cardMaxH) / 2.0;
-        ZVR(card, sel_registerName("frame:"), (CGRect){{cardX, cardY}, {cardW, cardMaxH}});
+        ZVR(card, sel_registerName("setFrame:"), (CGRect){{cardX, cardY}, {cardW, cardMaxH}});
         ZV1(card, sel_registerName("setBackgroundColor:"), ZColor(1, 1, 1, 1));  // 白色
         id cardLayer = ZS0(card, sel_registerName("layer"));
         ZVF(cardLayer, sel_registerName("setCornerRadius:"), kCardRadius);
@@ -352,20 +352,20 @@ static void ZHNABuildAndShowPanel(id window) {
         id titleLbl = ZHNAMakeLabel(
             [NSString stringWithFormat:@"%@  v%@", ZHNA_DISPLAY_NAME, ZHNA_VERSION],
             19, YES, ZColor(0.1, 0.1, 0.1, 1));
-        ZVR(titleLbl, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {cardW - kPadH * 2, 28}});
+        ZVR(titleLbl, sel_registerName("setFrame:"), (CGRect){{kPadH, yCursor}, {cardW - kPadH * 2, 28}});
         ZV1(card, sel_registerName("addSubview:"), titleLbl);
         yCursor += 32;
 
         id subLbl = ZHNAMakeLabel(
             [NSString stringWithFormat:@"已拦截 %ld 项 · 改完立即生效", (long)ZHNAStatsTotal()],
             13, NO, ZColor(0.55, 0.55, 0.55, 1));
-        ZVR(subLbl, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {cardW - kPadH * 2, 20}});
+        ZVR(subLbl, sel_registerName("setFrame:"), (CGRect){{kPadH, yCursor}, {cardW - kPadH * 2, 20}});
         ZV1(card, sel_registerName("addSubview:"), subLbl);
         yCursor += 28;
 
         // Header 底部分割线
         id headerDiv = ZHNAMakeDivider();
-        ZVR(headerDiv, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {cardW - kPadH * 2, kDividerH}});
+        ZVR(headerDiv, sel_registerName("setFrame:"), (CGRect){{kPadH, yCursor}, {cardW - kPadH * 2, kDividerH}});
         ZV1(card, sel_registerName("addSubview:"), headerDiv);
         yCursor += 10;
 
@@ -378,7 +378,7 @@ static void ZHNABuildAndShowPanel(id window) {
 
         Class scrollCls = ZHNAClass("UIScrollView");
         id scrollView = ZS0(scrollCls, sel_registerName("new"));
-        ZVR(scrollView, sel_registerName("frame:"), (CGRect){{0, yCursor}, {cardW, toggleAreaH}});
+        ZVR(scrollView, sel_registerName("setFrame:"), (CGRect){{0, yCursor}, {cardW, toggleAreaH}});
         ZVB(scrollView, sel_registerName("setShowsVerticalScrollIndicator:"), (BOOL)YES);
         ZVB(scrollView, sel_registerName("setAlwaysBounceVertical:"), (BOOL)YES);
         ZV1(card, sel_registerName("addSubview:"), scrollView);
@@ -393,25 +393,25 @@ static void ZHNABuildAndShowPanel(id window) {
 
             // 图标
             id iconLbl = ZHNAMakeIconLabel(emoji);
-            ZVR(iconLbl, sel_registerName("frame:"), (CGRect){{kPadH, rowY + (kRowH - 26) / 2}, {30, 26}});
+            ZVR(iconLbl, sel_registerName("setFrame:"), (CGRect){{kPadH, rowY + (kRowH - 26) / 2}, {30, 26}});
             ZV1(scrollView, sel_registerName("addSubview:"), iconLbl);
 
             // 标题文字
             id lbl = ZHNAMakeLabel(title, 16, NO, ZColor(0.15, 0.15, 0.15, 1));
-            ZVR(lbl, sel_registerName("frame:"), (CGRect){{kPadH + 34, rowY + (kRowH - 22) / 2}, {cardW - kPadH * 2 - 70, 22}});
+            ZVR(lbl, sel_registerName("setFrame:"), (CGRect){{kPadH + 34, rowY + (kRowH - 22) / 2}, {cardW - kPadH * 2 - 70, 22}});
             ZV1(scrollView, sel_registerName("addSubview:"), lbl);
 
             // UISwitch
             id sw = ZHNAMakeSwitch(key, isOn);
             CGFloat swW = 51, swH = 31;
-            ZVR(sw, sel_registerName("frame:"),
+            ZVR(sw, sel_registerName("setFrame:"),
                (CGRect){{cardW - kPadH - swW - 4, rowY + (kRowH - swH) / 2}, {swW, swH}});
             ZV1(scrollView, sel_registerName("addSubview:"), sw);
 
             // 分割线（最后一行不加）
             if (idx < keys.count - 1) {
                 id div = ZHNAMakeDivider();
-                ZVR(div, sel_registerName("frame:"),
+                ZVR(div, sel_registerName("setFrame:"),
                    (CGRect){{kPadH, rowY + kRowH - kDividerH}, {cardW - kPadH * 2, kDividerH}});
                 ZV1(scrollView, sel_registerName("addSubview:"), div);
             }
@@ -438,7 +438,7 @@ static void ZHNABuildAndShowPanel(id window) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{ ZHNAShowStatsPanel(window); });
         });
-        ZVR(statsBtn, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {btnW, btnH}});
+        ZVR(statsBtn, sel_registerName("setFrame:"), (CGRect){{kPadH, yCursor}, {btnW, btnH}});
         ZV1(card, sel_registerName("addSubview:"), statsBtn);
 
         id exportBtn = ZHNAMakeButton(@"📋 导出日志",
@@ -451,7 +451,7 @@ static void ZHNABuildAndShowPanel(id window) {
                     [NSString stringWithFormat:@"已保存到\n%@", path] : @"保存失败");
             });
         });
-        ZVR(exportBtn, sel_registerName("frame:"), (CGRect){{kPadH + btnW + btnGap, yCursor}, {btnW, btnH}});
+        ZVR(exportBtn, sel_registerName("setFrame:"), (CGRect){{kPadH + btnW + btnGap, yCursor}, {btnW, btnH}});
         ZV1(card, sel_registerName("addSubview:"), exportBtn);
         yCursor += btnH + 10;
 
@@ -462,21 +462,21 @@ static void ZHNABuildAndShowPanel(id window) {
             zhna_dismissPanel();
             ZHNALog(@"设置已恢复默认");
         });
-        ZVR(resetBtn, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {btnW, btnH}});
+        ZVR(resetBtn, sel_registerName("setFrame:"), (CGRect){{kPadH, yCursor}, {btnW, btnH}});
         ZV1(card, sel_registerName("addSubview:"), resetBtn);
 
         id closeBtn = ZHNAMakeButton(@"✕ 关闭",
             ZColor(0.90, 0.90, 0.92, 1), ZColor(0.40, 0.40, 0.42, 1), 14, ^{
             zhna_dismissPanel();
         });
-        ZVR(closeBtn, sel_registerName("frame:"), (CGRect){{kPadH + btnW + btnGap, yCursor}, {btnW, btnH}});
+        ZVR(closeBtn, sel_registerName("setFrame:"), (CGRect){{kPadH + btnW + btnGap, yCursor}, {btnW, btnH}});
         ZV1(card, sel_registerName("addSubview:"), closeBtn);
         yCursor += btnH + 16;
 
         // 调整卡片实际高度（不要留太多空白）
         CGFloat actualCardH = yCursor;
         if (actualCardH < cardMaxH) {
-            ZVR(card, sel_registerName("frame:"), (CGRect){{cardX, (screenH - actualCardH) / 2}, {cardW, actualCardH}});
+            ZVR(card, sel_registerName("setFrame:"), (CGRect){{cardX, (screenH - actualCardH) / 2}, {cardW, actualCardH}});
         }
 
         // 卡片入场小动画
@@ -507,7 +507,7 @@ static void ZHNAShowToast(id window, NSString *msg) {
 
         id toast = ZS0(toastCls, sel_registerName("new"));
         CGFloat tw = sb.size.width * 0.7;
-        ZVR(toast, sel_registerName("frame:"), (CGRect){{(sb.size.width - tw)/2, sb.size.height * 0.65}, {tw, 44}});
+        ZVR(toast, sel_registerName("setFrame:"), (CGRect){{(sb.size.width - tw)/2, sb.size.height * 0.65}, {tw, 44}});
         ZV1(toast, sel_registerName("setBackgroundColor:"), ZColor(0.15, 0.15, 0.15, 0.88));
         id tLayer = ZS0(toast, sel_registerName("layer"));
         ZVF(tLayer, sel_registerName("setCornerRadius:"), 10);
@@ -521,7 +521,7 @@ static void ZHNAShowToast(id window, NSString *msg) {
         // Actually let's just create fresh
         Class lblCls = ZHNAClass("UILabel");
         tLbl = ZS0(lblCls, sel_registerName("new"));
-        ZVR(tLbl, sel_registerName("frame:"), (CGRect){{8, 0}, {tw - 16, 44}});
+        ZVR(tLbl, sel_registerName("setFrame:"), (CGRect){{8, 0}, {tw - 16, 44}});
         ZV1(tLbl, sel_registerName("setText:"), msg);
         ZV1(tLbl, sel_registerName("setTextColor:"), ZColor(1, 1, 1, 1));
         ((void (*)(id, SEL, NSInteger))objc_msgSend)(tLbl, sel_registerName("setTextAlignment:"), (NSInteger)1);  // NSTextAlignmentCenter
@@ -725,7 +725,7 @@ static void ZHNAInstallFloatingButton(void) {
         ZVB(btn, sel_registerName("setClipsToBounds:"), YES);
 
         CGFloat size = 48;
-        ZVR(btn, sel_registerName("frame:"), (CGRect){{0, 0}, {size, size}});
+        ZVR(btn, sel_registerName("setFrame:"), (CGRect){{0, 0}, {size, size}});
         id layer = ZS0(btn, sel_registerName("layer"));
         ZVF(layer, sel_registerName("setCornerRadius:"), (CGFloat)(size / 2));
         ZVB(layer, sel_registerName("setMasksToBounds:"), YES);
