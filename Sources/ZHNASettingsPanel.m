@@ -372,8 +372,8 @@ static void ZHNABuildAndShowPanel(id window) {
         Class scrollCls = ZHNAClass("UIScrollView");
         id scrollView = ZS0(scrollCls, sel_registerName("new"));
         ZVR(scrollView, sel_registerName("frame:"), (CGRect){{0, yCursor}, {cardW, toggleAreaH}});
-        ZV1(scrollView, sel_registerName("setShowsVerticalScrollIndicator:"), YES);
-        ZV1(scrollView, sel_registerName("setAlwaysBounceVertical:"), YES);
+        ZVB(scrollView, sel_registerName("setShowsVerticalScrollIndicator:"), (BOOL)YES);
+        ZVB(scrollView, sel_registerName("setAlwaysBounceVertical:"), (BOOL)YES);
         ZV1(card, sel_registerName("addSubview:"), scrollView);
         gToggleScrollView = scrollView;
 
