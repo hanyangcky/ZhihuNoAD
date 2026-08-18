@@ -1,8 +1,9 @@
 //
 //  ZHNASettingsPanel.m
 //
-//  在知乎界面放一个可拖动的悬浮小圆钮，轻点即呼出设置面板。
+//  自定义圆角卡片式设置面板 + 可拖动悬浮按钮 + 摇一摇广告拦截。
 //  全部用 runtime 调用 UIKit，不产生 UIKit 链接依赖。
+//  视觉参考：AntForestTrollFools（分组圆角卡片、图标+开关行、浅灰底色）。
 //
 
 #import "ZHNASettingsPanel.h"
@@ -10,89 +11,529 @@
 #import "ZHNAConfig.h"
 #import "ZHNASwizzle.h"
 
-#define ZHNA_ALERT_STYLE_ALERT 1   // UIAlertControllerStyleAlert
-#define ZHNA_ACTION_DEFAULT 0
-#define ZHNA_ACTION_CANCEL 1
-#define ZHNA_ACTION_DESTRUCTIVE 2
+#pragma mark - 常量
 
-static BOOL gPanelVisible = NO;
-static const void *kZHNALongPressKey = &kZHNALongPressKey;  // 挂在 keyWindow 上：是否已装双指长按
+static const CGFloat kCardW        = 340.0;
+static const CGFloat kCardRadius   = 16.0;
+static const CGFloat kRowH         = 52.0;
+static const CGFloat kPadH         = 20.0;
+static const CGFloat kPadV         = 12.0;
+static const CGFloat kDividerH     = 0.5;
 
-#pragma mark - UIKit runtime 小工具
+// UIControlEvent 枚举值（不能引 UIKit 头文件）
+static const NSUInteger kUIControlEventTouchUpInside = (1 << 6);   // 64
+static const NSUInteger kUIControlEventValueChanged   = (1 << 12); // 4096
 
-static id ZHNAMakeAlert(NSString *title, NSString *message) {
-    Class cls = ZHNAClass("UIAlertController");
-    if (cls == Nil) return nil;
-    id (*fn)(id, SEL, id, id, NSInteger) = (id (*)(id, SEL, id, id, NSInteger))objc_msgSend;
-    return fn(cls, sel_registerName("alertControllerWithTitle:message:preferredStyle:"),
-              title, message, ZHNA_ALERT_STYLE_ALERT);
+// UIEventType / UIEventSubtype
+static const NSInteger kUIEventTypeMotion     = 1;
+static const NSInteger kUISubtypeMotionShake  = 1;
+
+#pragma mark - 全局状态
+
+static BOOL gPanelVisible       = NO;
+static id   gOverlayView        = nil;    // 半透明遮罩
+static id   gCardView           = nil;    // 白色卡片容器
+static id   gToggleScrollView   = nil;    // 开关区域滚动视图
+
+// 悬浮按钮状态
+static BOOL gFloatingInstalled     = NO;
+static BOOL gFloatingRetryScheduled = NO;
+static CGPoint gBtnStartCenter;
+
+// Associated Object keys
+static const void *kZHNAConfigKeyAssoc = &kZHNAConfigKeyAssoc;
+static const void *kZHNABlockAssoc     = &kZHNABlockAssoc;
+static const void *kZHNAOverlayTapAssoc = &kZHNAOverlayTapAssoc;
+
+#pragma mark - UIKit runtime 小工具（显式转型封装）
+
+static inline id   ZS0(id o, SEL s) { return ((id   (*)(id, SEL))objc_msgSend)(o, s); }
+static inline id   ZS1(id o, SEL s, id a) { return ((id   (*)(id, SEL, id))objc_msgSend)(o, s, a); }
+static inline id   ZS2(id o, SEL s, id a, id b) { return ((id   (*)(id, SEL, id, id))objc_msgSend)(o, s, a, b); }
+static inline void ZV1(id o, SEL s, id a) { ((void (*)(id, SEL, id))objc_msgSend)(o, s, a); }
+static inline void ZV2(id o, SEL s, id a, id b) { ((void (*)(id, SEL, id, id))objc_msgSend)(o, s, a, b); }
+static inline void ZVB(id o, SEL s, BOOL b) { ((void (*)(id, SEL, BOOL))objc_msgSend)(o, s, b); }
+static inline void ZVF(id o, SEL s, CGFloat f) { ((void (*)(id, SEL, CGFloat))objc_msgSend)(o, s, f); }
+static inline void ZVI(id o, SEL s, NSInteger i) { ((void (*)(id, SEL, NSInteger))objc_msgSend)(o, s, i); }
+static inline void ZVP(id o, SEL s, CGPoint p) { ((void (*)(id, SEL, CGPoint))objc_msgSend)(o, s, p); }
+static inline void ZVR(id o, SEL s, CGRect r) { ((void (*)(id, SEL, CGRect))objc_msgSend)(o, s, r); }
+static inline CGPoint ZGP(id o, SEL s) { return ((CGPoint (*)(id, SEL))objc_msgSend)(o, s); }
+static inline CGPoint ZGP1(id o, SEL s, id a) { return ((CGPoint (*)(id, SEL, id))objc_msgSend)(o, s, a); }
+static inline CGRect ZGR(id o, SEL s) { return ((CGRect (*)(id, SEL))objc_msgSend)(o, s); }
+static inline NSInteger ZGI(id o, SEL s) { return ((NSInteger (*)(id, SEL))objc_msgSend)(o, s); }
+static inline double  ZGD(id o, SEL s) { return ((double  (*)(id, SEL))objc_msgSend)(o, s); }
+static inline BOOL    ZGB(id o, SEL s) { return ((BOOL    (*)(id, SEL))objc_msgSend)(o, s); }
+
+static id ZStr(const char *s) {
+    Class c = ZHNAClass("NSString"); if (c == Nil) return nil;
+    return ((id (*)(id, SEL, const char *))objc_msgSend)(c, sel_registerName("stringWithUTF8String:"), s);
 }
 
-static id ZHNAMakeAction(NSString *title, NSInteger style, void (^handler)(id action)) {
-    Class cls = ZHNAClass("UIAlertAction");
-    if (cls == Nil) return nil;
-    id (*fn)(id, SEL, id, NSInteger, id) = (id (*)(id, SEL, id, NSInteger, id))objc_msgSend;
-    return fn(cls, sel_registerName("actionWithTitle:style:handler:"), title, style, handler);
+static id ZColor(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
+    Class c = ZHNAClass("UIColor"); if (c == Nil) return nil;
+    return ((id (*)(id, SEL, CGFloat, CGFloat, CGFloat, CGFloat))objc_msgSend)(
+        c, sel_registerName("colorWithRed:green:blue:alpha:"), r, g, b, a);
 }
 
-static id ZHNATopViewControllerInWindow(id window) {
-    id<ZHNAUIShim> w = (id<ZHNAUIShim>)window;
-    id vc = w.rootViewController;
-    NSInteger guard = 0;
-    while (vc != nil && guard++ < 32) {
-        id presented = ((id<ZHNAUIShim>)vc).presentedViewController;
-        if (presented == nil) break;
-        vc = presented;
+static id ZFont(CGFloat size, BOOL bold) {
+    Class c = ZHNAClass("UIFont"); if (c == Nil) return nil;
+    if (bold)
+        return ((id (*)(id, SEL, CGFloat))objc_msgSend)(c, sel_registerName("boldSystemFontOfSize:"), size);
+    else
+        return ((id (*)(id, SEL, CGFloat))objc_msgSend)(c, sel_registerName("systemFontOfSize:"), size);
+}
+
+/// 安全取 keyWindow（兼容 iOS 13+）
+static id ZHNAKeyWindow(void) {
+    Class appCls = ZHNAClass("UIApplication");
+    if (appCls == Nil) return nil;
+    id app = ZS0(appCls, sel_registerName("sharedApplication"));
+    if (app == nil) return nil;
+    id kw = ZS0(app, sel_registerName("keyWindow"));
+    if (kw != nil) return kw;
+    id wins = ZS0(app, sel_registerName("windows"));
+    if (wins != nil && [wins respondsToSelector:@selector(lastObject)])
+        return [wins lastObject];
+    return nil;
+}
+
+#pragma mark - 摇一摇广告拦截（MotionGuard）
+
+static void (*gOrigSendEvent)(id, SEL, id);
+
+static void zhna_sendEvent(id self, SEL _cmd, id event) {
+    NSInteger type = ZGI(event, sel_registerName("type"));
+    if (type == kUIEventTypeMotion) {
+        NSInteger subtype = ZGI(event, sel_registerName("subtype"));
+        if (subtype == kUISubtypeMotionShake) {
+            return;  // 吞掉摇一摇事件 → 知乎无法触发"摇一摇跳转广告"
+        }
     }
-    return vc;
+    gOrigSendEvent(self, _cmd, event);
 }
 
-static void ZHNAPresent(id window, id alert) {
-    if (alert == nil) return;
-    id top = ZHNATopViewControllerInWindow(window);
-    if (top == nil) return;
-    gPanelVisible = YES;
-    [(id<ZHNAUIShim>)top presentViewController:alert animated:YES completion:nil];
-}
-
-static void ZHNAShowMainPanel(id window);
-
-/// 稍微延迟一下再弹下一层，等上一层的关闭动画结束
-static void ZHNARepresent(id window, void (^block)(void)) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        block();
+static void ZHNAInstallMotionGuard(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class cls = ZHNAClass("UIApplication");
+        if (cls == Nil) return;
+        Method m = class_getInstanceMethod(cls, sel_registerName("sendEvent:"));
+        if (!m) return;
+        gOrigSendEvent = (void(*)(id, SEL, id))method_getImplementation(m);
+        method_setImplementation(m, (IMP)zhna_sendEvent);
+        ZHNALog(@"摇一摇事件拦截已安装（知乎原生摇一摇跳广告将被屏蔽）");
     });
 }
 
-#pragma mark - 各级面板
+#pragma mark - 动态 Handler 类（Switch + Button 共用）
 
-static void ZHNAShowToggles(id window) {
-    NSString *msg = @"✅ = 已开启，点一下切换\n改完立即生效，个别项目需要重开知乎";
-    id alert = ZHNAMakeAlert(@"功能开关", msg);
-    if (alert == nil) return;
+static id gUICmdTarget = nil;  // 统一的 target 对象
 
-    for (NSString *key in ZHNAAllKeys()) {
-        BOOL on = ZHNAConfigRawBool(key);
-        NSString *title = [NSString stringWithFormat:@"%@ %@", on ? @"✅" : @"⬜️", ZHNATitleForKey(key)];
-        id action = ZHNAMakeAction(title, ZHNA_ACTION_DEFAULT, ^(id a) {
-            ZHNAConfigToggle(key);
+/// Switch value changed → 更新对应 config key
+static void zhna_onSwitchChanged(id self, SEL _cmd, id sw) {
+    NSString *key = objc_getAssociatedObject(sw, kZHNAConfigKeyAssoc);
+    if (key) {
+        BOOL on = ZGB(sw, sel_registerName("isOn"));
+        ZHNAConfigSetBool(key, on);
+    }
+}
+
+/// Button tap → 执行关联的 block
+static void zhna_onButtonTap(id self, SEL _cmd, id btn) {
+    typedef void (^Block)(void);
+    Block blk = objc_getAssociatedObject(btn, kZHNABlockAssoc);
+    if (blk) blk();
+}
+
+/// Overlay background tap → 关闭面板
+static void zhna_onOverlayTap(id self, SEL _cmd, id gest) {
+    zhna_dismissPanel();
+}
+
+static void ZHNAEnsureCmdTarget(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class base = ZHNAClass("NSObject");
+        if (base == Nil) return;
+        Class cls = objc_allocateClassPair(base, "ZHNAUICmdTarget", 0);
+        class_addMethod(cls, sel_registerName("zhna_onSwitchChanged:"),
+                        (IMP)zhna_onSwitchChanged, "v@:@");
+        class_addMethod(cls, sel_registerName("zhna_onButtonTap:"),
+                        (IMP)zhna_onButtonTap, "v@:@");
+        class_addMethod(cls, sel_registerName("zhna_onOverlayTap:"),
+                        (IMP)zhna_onOverlayTap, "v@:@");
+        objc_registerClassPair(cls);
+        gUICmdTarget = ZS0(cls, sel_registerName("new"));
+    });
+}
+
+#pragma mark - 面板关闭
+
+static void zhna_dismissPanel(void) {
+    if (!gPanelVisible) return;
+    @try {
+        // 简单的淡出动画
+        id animCls = ZHNAClass("UIView");
+        if (animCls != Nil && gCardView != nil) {
+            typedef void (^AnimBlock)(void);
+            AnimBlock fade = ^{ ZVF(gOverlayView, sel_registerName("setAlpha:"), 0); };
+            AnimBlock done = ^{
+                [gOverlayView removeFromSuperview];
+                gOverlayView = nil;
+                gCardView = nil;
+                gToggleScrollView = nil;
+                gPanelVisible = NO;
+            };
+            // UIView animateWithDuration:animations:completion:
+            ((void (*)(id, SEL, double, id, id))objc_msgSend)(
+                animCls, sel_registerName("animateWithDuration:animations:completion:"),
+                0.20, fade, done);
+        } else {
+            [gOverlayView removeFromSuperview];
+            gOverlayView = nil; gCardView = nil; gToggleScrollView = nil;
             gPanelVisible = NO;
-            ZHNARepresent(window, ^{ ZHNAShowToggles(window); });
-        });
-        if (action) [(id<ZHNAUIShim>)alert addAction:action];
-    }
-
-    id back = ZHNAMakeAction(@"‹ 返回", ZHNA_ACTION_CANCEL, ^(id a) {
+        }
+    } @catch (NSException *e) {
+        ZHNALog(@"面板关闭异常: %@", e);
         gPanelVisible = NO;
-        ZHNARepresent(window, ^{ ZHNAShowMainPanel(window); });
-    });
-    if (back) [(id<ZHNAUIShim>)alert addAction:back];
-
-    ZHNAPresent(window, alert);
+    }
 }
 
-static void ZHNAShowStats(id window) {
+#pragma mark - UI 组件工厂
+
+static id ZHNAMakeLabel(NSString *text, CGFloat fontSize, BOOL bold, id color) {
+    Class cls = ZHNAClass("UILabel"); if (cls == Nil) return nil;
+    id lbl = ZS0(cls, sel_registerName("new")); if (lbl == nil) return nil;
+    ZV1(lbl, sel_registerName("setText:"), text);
+    if (color) ZV1(lbl, sel_registerName("setTextColor:"), color);
+    id font = ZFont(fontSize, bold);
+    if (font) ZV1(lbl, sel_registerName("setFont:"), font);
+    return lbl;
+}
+
+static id ZHNAMakeSwitch(NSString *configKey, BOOL isOn) {
+    Class cls = ZHNAClass("UISwitch"); if (cls == Nil) return nil;
+    id sw = ZS0(cls, sel_registerName("new")); if (sw == nil) return nil;
+    // setOn:animated:
+    ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(sw, sel_registerName("setOn:animated:"), isOn, NO);
+    // 关联 config key
+    objc_setAssociatedObject(sw, kZHNAConfigKeyAssoc, configKey,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // addTarget
+    ZHNAEnsureCmdTarget();
+    ((void (*)(id, SEL, id, SEL, NSUInteger))objc_msgSend)(
+        sw, sel_registerName("addTarget:action:forControlEvents:"),
+        gUICmdTarget, sel_registerName("zhna_onSwitchChanged:"),
+        kUIControlEventValueChanged);
+    return sw;
+}
+
+static id ZHNAMakeButton(NSString *title, id bgColor, id titleColor,
+                          CGFloat fontSize, void (^block)(void)) {
+    Class cls = ZHNAClass("UIButton"); if (cls == Nil) return nil;
+    id btn = ZS0(cls, sel_registerName("new")); if (btn == nil) return nil;
+    // setTitle:forState:
+    ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(
+        btn, sel_registerName("setTitle:forState:"), title, 0);
+    // setTitleColor:forState:
+    ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(
+        btn, sel_registerName("setTitleColor:forState:"), titleColor, 0);
+    // setBackgroundColor:
+    if (bgColor) ZV1(btn, sel_registerName("setBackgroundColor:"), bgColor);
+    // titleLabel font
+    id titleLbl = ZS1(btn, sel_registerName("titleLabel"), nil);
+    if (titleLbl) {
+        id f = ZFont(fontSize, NO);
+        if (f) ZV1(titleLbl, sel_registerName("setFont:"), f);
+    }
+    // cornerRadius
+    id layer = ZS0(btn, sel_registerName("layer"));
+    if (layer) ZVF(layer, sel_registerName("setCornerRadius:"), 8.0);
+    // clipsToBounds
+    ZVB(btn, sel_registerName("setClipsToBounds:"), YES);
+    // block
+    if (block) {
+        objc_setAssociatedObject(btn, kZHNABlockAssoc, block,
+                                 OBJC_ASSOCIATION_COPY_NONATOMIC);
+        ZHNAEnsureCmdTarget();
+        ((void (*)(id, SEL, id, SEL, NSUInteger))objc_msgSend)(
+            btn, sel_registerName("addTarget:action:forControlEvents:"),
+            gUICmdTarget, sel_registerName("zhna_onButtonTap:"),
+            kUIControlEventTouchUpInside);
+    }
+    return btn;
+}
+
+static id ZHNAMakeDivider(void) {
+    Class cls = ZHNAClass("UIView"); if (cls == Nil) return nil;
+    id v = ZS0(cls, sel_registerName("new")); if (v == nil) return nil;
+    ZVR(v, sel_registerName("setFrame:"), (CGRect){{0, 0}, {kCardW - kPadH * 2, kDividerH}});
+    ZV1(v, sel_registerName("setBackgroundColor:"), ZColor(0.85, 0.85, 0.85, 1));
+    return v;
+}
+
+static id ZHNAMakeIconLabel(NSString *emoji) {
+    return ZHNAMakeLabel(emoji, 22, NO, nil);
+}
+
+#pragma mark - 面板构建
+
+/// 各开关对应的 emoji 图标（与 AntForest 风格一致：左侧彩色图标）
+static NSString *ZHNAEmojiForKey(NSString *key) {
+    if ([key isEqualToString:ZHNAKeyMaster])   return @"\U0001f512";  // 🔒
+    if ([key isEqualToString:ZHNAKeySplash])   return @"\U0001f3ac";  // 🎬
+    if ([key isEqualToString:ZHNAKeyFeed])     return @"\U0001f4f0";  // 📰
+    if ([key isEqualToString:ZHNAKeyDetail])   return @"\U0001f4c4";  // 📄
+    if ([key isEqualToString:ZHNAKeySearch])   return @"\U0001f50d";  // 🔍
+    if ([key isEqualToString:ZHNAKeyPopup])    return @"\U0001f4ac";  // 💬
+    if ([key isEqualToString:ZHNAKeyPaid])     return @"\U0001f4b0";  // 💰
+    if ([key isEqualToString:ZHNAKeyTracking]) return @"\U0001f4e1";  // 📡
+    if ([key isEqualToString:ZHNAKeyUIGuard])  return @"\U0001f441";  // 👁️
+    if ([key isEqualToString:ZHNAKeyDebug])    return @"\U0001f41e";  // 🐛
+    return @"⚙️";
+}
+
+static void ZHNABuildAndShowPanel(id window) {
+    if (gPanelVisible) return;
+    gPanelVisible = YES;
+
+    @try {
+        CGRect screenBounds = ZGR(window, sel_registerName("bounds"));
+        CGFloat screenW = screenBounds.size.width;
+        CGFloat screenH = screenBounds.size.height;
+
+        // ---- 1. 半透明遮罩 ----
+        Class viewCls = ZHNAClass("UIView");
+        id overlay = ZS0(viewCls, sel_registerName("new"));
+        ZVR(overlay, sel_registerName("frame:"), screenBounds);
+        ZV1(overlay, sel_registerName("setBackgroundColor:"), ZColor(0, 0, 0, 0.35));
+        ZVB(overlay, sel_registerName("setUserInteractionEnabled:"), YES);
+
+        // 遮罩点击手势 → 关闭
+        Class tapGestCls = ZHNAClass("UITapGestureRecognizer");
+        id overlayTap = ZS0(tapGestCls, sel_registerName("new"));
+        ZHNAEnsureCmdTarget();
+        ((void (*)(id, SEL, id, SEL))objc_msgSend)(
+            overlayTap, sel_registerName("addTarget:action:"),
+            gUICmdTarget, sel_registerName("zhna_onOverlayTap:"));
+        ZV1(overlay, sel_registerName("addGestureRecognizer:"), overlayTap);
+
+        ZV1(window, sel_registerName("addSubview:"), overlay);
+        gOverlayView = overlay;
+
+        // ---- 2. 白色卡片容器 ----
+        CGFloat cardW = (kCardW < screenW - 24) ? kCardW : screenW - 24;
+        CGFloat cardMaxH = screenH * 0.85;
+        id card = ZS0(viewCls, sel_registerName("new"));
+        CGFloat cardX = (screenW - cardW) / 2.0;
+        CGFloat cardY = (screenH - cardMaxH) / 2.0;
+        ZVR(card, sel_registerName("frame:"), (CGRect){{cardX, cardY}, {cardW, cardMaxH}});
+        ZV1(card, sel_registerName("setBackgroundColor:"), ZColor(1, 1, 1, 1));  // 白色
+        id cardLayer = ZS0(card, sel_registerName("layer"));
+        ZVF(cardLayer, sel_registerName("setCornerRadius:"), kCardRadius);
+        ZVB(cardLayer, sel_registerName("setMasksToBounds:"), YES);
+        ZV1(overlay, sel_registerName("addSubview:"), card);
+        gCardView = card;
+
+        // ---- 3. Header ----
+        CGFloat yCursor = 18;
+        id titleLbl = ZHNAMakeLabel(
+            [NSString stringWithFormat:@"%@  v%@", ZHNA_DISPLAY_NAME, ZHNA_VERSION],
+            19, YES, ZColor(0.1, 0.1, 0.1, 1));
+        ZVR(titleLbl, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {cardW - kPadH * 2, 28}});
+        ZV1(card, sel_registerName("addSubview:"), titleLbl);
+        yCursor += 32;
+
+        id subLbl = ZHNAMakeLabel(
+            [NSString stringWithFormat:@"已拦截 %ld 项 · 改完立即生效", (long)ZHNAStatsTotal()],
+            13, NO, ZColor(0.55, 0.55, 0.55, 1));
+        ZVR(subLbl, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {cardW - kPadH * 2, 20}});
+        ZV1(card, sel_registerName("addSubview:"), subLbl);
+        yCursor += 28;
+
+        // Header 底部分割线
+        id headerDiv = ZHNAMakeDivider();
+        ZVR(headerDiv, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {cardW - kPadH * 2, kDividerH}});
+        ZV1(card, sel_registerName("addSubview:"), headerDiv);
+        yCursor += 10;
+
+        // ---- 4. 开关区域（UIScrollView） ----
+        NSArray *keys = ZHNAAllKeys();
+        CGFloat toggleAreaH = keys.count * kRowH;
+        // 限制最大高度，超出则滚动
+        CGFloat maxToggleH = cardMaxH - yCursor - 140;  // 给底部操作区留空间
+        if (toggleAreaH > maxToggleH) toggleAreaH = maxToggleH;
+
+        Class scrollCls = ZHNAClass("UIScrollView");
+        id scrollView = ZS0(scrollCls, sel_registerName("new"));
+        ZVR(scrollView, sel_registerName("frame:"), (CGRect){{0, yCursor}, {cardW, toggleAreaH}});
+        ZV1(scrollView, sel_registerName("setShowsVerticalScrollIndicator:"), YES);
+        ZV1(scrollView, sel_registerName("setAlwaysBounceVertical:"), YES);
+        ZV1(card, sel_registerName("addSubview:"), scrollView);
+        gToggleScrollView = scrollView;
+
+        CGFloat rowY = 0;
+        for (NSUInteger idx = 0; idx < keys.count; idx++) {
+            NSString *key = keys[idx];
+            BOOL isOn = ZHNAConfigRawBool(key);
+            NSString *title = ZHNATitleForKey(key);
+            NSString *emoji = ZHNAEmojiForKey(key);
+
+            // 图标
+            id iconLbl = ZHNAMakeIconLabel(emoji);
+            ZVR(iconLbl, sel_registerName("frame:"), (CGRect){{kPadH, rowY + (kRowH - 26) / 2}, {30, 26}});
+            ZV1(scrollView, sel_registerName("addSubview:"), iconLbl);
+
+            // 标题文字
+            id lbl = ZHNAMakeLabel(title, 16, NO, ZColor(0.15, 0.15, 0.15, 1));
+            ZVR(lbl, sel_registerName("frame:"), (CGRect){{kPadH + 34, rowY + (kRowH - 22) / 2}, {cardW - kPadH * 2 - 70, 22}});
+            ZV1(scrollView, sel_registerName("addSubview:"), lbl);
+
+            // UISwitch
+            id sw = ZHNAMakeSwitch(key, isOn);
+            CGFloat swW = 51, swH = 31;
+            ZVR(sw, sel_registerName("frame:"),
+               (CGRect){{cardW - kPadH - swW - 4, rowY + (kRowH - swH) / 2}, {swW, swH}});
+            ZV1(scrollView, sel_registerName("addSubview:"), sw);
+
+            // 分割线（最后一行不加）
+            if (idx < keys.count - 1) {
+                id div = ZHNAMakeDivider();
+                ZVR(div, sel_registerName("frame:"),
+                   (CGRect){{kPadH, rowY + kRowH - kDividerH}, {cardW - kPadH * 2, kDividerH}});
+                ZV1(scrollView, sel_registerName("addSubview:"), div);
+            }
+
+            rowY += kRowH;
+        }
+
+        // 设置 contentSize
+        ((void (*)(id, SEL, CGSize))objc_msgSend)(
+            scrollView, sel_registerName("setContentSize:"),
+            (CGSize){cardW, rowY});
+
+        yCursor += toggleAreaH + 8;
+
+        // ---- 5. 操作按钮区 ----
+        CGFloat btnH = 38;
+        CGFloat btnGap = 10;
+        CGFloat btnW = (cardW - kPadH * 2 - btnGap) / 2.0;
+
+        // 第一行：拦截统计 | 导出日志
+        id statsBtn = ZHNAMakeButton(@"📊 拦截统计",
+            ZColor(0.92, 0.94, 0.98, 1), ZColor(0.05, 0.25, 0.85, 1), 14, ^{
+            zhna_dismissPanel();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ ZHNAShowStatsPanel(window); });
+        });
+        ZVR(statsBtn, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {btnW, btnH}});
+        ZV1(card, sel_registerName("addSubview:"), statsBtn);
+
+        id exportBtn = ZHNAMakeButton(@"📋 导出日志",
+            ZColor(0.92, 0.94, 0.98, 1), ZColor(0.05, 0.25, 0.85, 1), 14, ^{
+            zhna_dismissPanel();
+            NSString *path = ZHNALogExport();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                ZHNAShowToast(window, path ?
+                    [NSString stringWithFormat:@"已保存到\n%@", path] : @"保存失败");
+            });
+        });
+        ZVR(exportBtn, sel_registerName("frame:"), (CGRect){{kPadH + btnW + btnGap, yCursor}, {btnW, btnH}});
+        ZV1(card, sel_registerName("addSubview:"), exportBtn);
+        yCursor += btnH + 10;
+
+        // 第二行：恢复默认 | 关闭
+        id resetBtn = ZHNAMakeButton(@"↩️ 恢复默认",
+            ZColor(1, 0.93, 0.92, 1), ZColor(0.85, 0.15, 0.15, 1), 14, ^{
+            ZHNAConfigResetToDefault();
+            zhna_dismissPanel();
+            ZHNALog(@"设置已恢复默认");
+        });
+        ZVR(resetBtn, sel_registerName("frame:"), (CGRect){{kPadH, yCursor}, {btnW, btnH}});
+        ZV1(card, sel_registerName("addSubview:"), resetBtn);
+
+        id closeBtn = ZHNAMakeButton(@"✕ 关闭",
+            ZColor(0.90, 0.90, 0.92, 1), ZColor(0.40, 0.40, 0.42, 1), 14, ^{
+            zhna_dismissPanel();
+        });
+        ZVR(closeBtn, sel_registerName("frame:"), (CGRect){{kPadH + btnW + btnGap, yCursor}, {btnW, btnH}});
+        ZV1(card, sel_registerName("addSubview:"), closeBtn);
+        yCursor += btnH + 16;
+
+        // 调整卡片实际高度（不要留太多空白）
+        CGFloat actualCardH = yCursor;
+        if (actualCardH < cardMaxH) {
+            ZVR(card, sel_registerName("frame:"), (CGRect){{cardX, (screenH - actualCardH) / 2}, {cardW, actualCardH}});
+        }
+
+        // 卡片入场小动画
+        id animCls2 = ZHNAClass("UIView");
+        ZVF(gCardView, sel_registerName("setAlpha:"), 0);
+        ZVP(gCardView, sel_registerName("setCenter:"), (CGPoint){screenW/2, screenH/2 + 30});
+        ((void (*)(id, SEL, double, id))objc_msgSend)(
+            animCls2, sel_registerName("animateWithDuration:animations:"),
+            0.22, ^{
+                ZVF(gCardView, sel_registerName("setAlpha:"), 1);
+                ZVP(gCardView, sel_registerName("setCenter:"), (CGPoint){screenW/2, screenH/2});
+            });
+
+    } @catch (NSException *e) {
+        ZHNALog(@"构建设置面板失败: %@", e);
+        gPanelVisible = NO;
+        if (gOverlayView) { [gOverlayView removeFromSuperview]; gOverlayView = nil; gCardView = nil; }
+    }
+}
+
+#pragma mark - Toast 提示
+
+static void ZHNAShowToast(id window, NSString *msg) {
+    @try {
+        Class toastCls = ZHNAClass("UIView");
+        if (toastCls == Nil) return;
+        CGRect sb = ZGR(window, sel_registerName("bounds"));
+
+        id toast = ZS0(toastCls, sel_registerName("new"));
+        CGFloat tw = sb.size.width * 0.7;
+        ZVR(toast, sel_registerName("frame:"), (CGRect){{(sb.size.width - tw)/2, sb.size.height * 0.65}, {tw, 44}});
+        ZV1(toast, sel_registerName("setBackgroundColor:"), ZColor(0.15, 0.15, 0.15, 0.88));
+        id tLayer = ZS0(toast, sel_registerName("layer"));
+        ZVF(tLayer, sel_registerName("setCornerRadius:"), 10);
+        ZVB(tLayer, sel_registerName("setMasksToBounds:"), YES);
+
+        id tLbl = ZHNAMakeLabel(msg, 13, NO, ZColor(1, 1, 1, 1));
+        tLbl = ZS1(tLbl, sel_registerName("initWithFrame:"), (CGRect){{8, 0}, {tw - 16, 44}});  // re-create with frame
+        // Actually let's just create fresh
+        Class lblCls = ZHNAClass("UILabel");
+        tLbl = ZS0(lblCls, sel_registerName("new"));
+        ZVR(tLbl, sel_registerName("frame:"), (CGRect){{8, 0}, {tw - 16, 44}});
+        ZV1(tLbl, sel_registerName("setText:"), msg);
+        ZV1(tLbl, sel_registerName("setTextColor:"), ZColor(1, 1, 1, 1));
+        ZV1(tLbl, sel_registerName("setTextAlignment:"), 1);  // NSTextAlignmentCenter
+        id tf = ZFont(13, NO);
+        if (tf) ZV1(tLbl, sel_registerName("setFont:"), tf);
+        ZV1(tLbl, sel_registerName("numberOfLines:"), 0);
+        ZV1(toast, sel_registerName("addSubview:"), tLbl);
+
+        ZV1(window, sel_registerName("addSubview:"), toast);
+
+        // 自动消失
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            ((void (*)(id, SEL, double, id))objc_msgSend)(
+                toastCls, sel_registerName("animateWithDuration:animations:"),
+                0.25, ^{ ZVF(toast, sel_registerName("setAlpha:"), 0); });
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ [toast removeFromSuperview]; });
+        });
+    } @catch (NSException *e) {
+        ZHNALog(@"Toast 显示失败: %@", e);
+    }
+}
+
+#pragma mark - 统计面板（保留旧逻辑，改为 Toast 展示）
+
+static void ZHNAShowStatsPanel(id window) {
     NSDictionary<NSString *, NSNumber *> *stats = ZHNAStatsSnapshot();
     NSMutableString *msg = [NSMutableString string];
 
@@ -110,103 +551,12 @@ static void ZHNAShowStats(id window) {
         [msg appendFormat:@"\n合计 %ld 项", (long)ZHNAStatsTotal()];
     }
 
-    id alert = ZHNAMakeAlert(@"拦截统计", msg);
-    if (alert == nil) return;
-
-    id reset = ZHNAMakeAction(@"清零", ZHNA_ACTION_DESTRUCTIVE, ^(id a) {
-        ZHNAStatsReset();
-        gPanelVisible = NO;
-    });
-    if (reset) [(id<ZHNAUIShim>)alert addAction:reset];
-
-    id back = ZHNAMakeAction(@"‹ 返回", ZHNA_ACTION_CANCEL, ^(id a) {
-        gPanelVisible = NO;
-        ZHNARepresent(window, ^{ ZHNAShowMainPanel(window); });
-    });
-    if (back) [(id<ZHNAUIShim>)alert addAction:back];
-
-    ZHNAPresent(window, alert);
+    ZHNAShowToast(window, msg);
 }
 
-static void ZHNAShowMainPanel(id window) {
-    NSString *title = [NSString stringWithFormat:@"%@ v%@", ZHNA_DISPLAY_NAME, ZHNA_VERSION];
-    NSString *msg = [NSString stringWithFormat:@"总开关：%@\n本次已拦截 %ld 项",
-                     ZHNAConfigRawBool(ZHNAKeyMaster) ? @"开启" : @"关闭",
-                     (long)ZHNAStatsTotal()];
+#pragma mark - 公开 API
 
-    id alert = ZHNAMakeAlert(title, msg);
-    if (alert == nil) return;
-
-    id toggles = ZHNAMakeAction(@"功能开关…", ZHNA_ACTION_DEFAULT, ^(id a) {
-        gPanelVisible = NO;
-        ZHNARepresent(window, ^{ ZHNAShowToggles(window); });
-    });
-    if (toggles) [(id<ZHNAUIShim>)alert addAction:toggles];
-
-    id stats = ZHNAMakeAction(@"拦截统计…", ZHNA_ACTION_DEFAULT, ^(id a) {
-        gPanelVisible = NO;
-        ZHNARepresent(window, ^{ ZHNAShowStats(window); });
-    });
-    if (stats) [(id<ZHNAUIShim>)alert addAction:stats];
-
-    id exportLog = ZHNAMakeAction(@"导出诊断日志", ZHNA_ACTION_DEFAULT, ^(id a) {
-        gPanelVisible = NO;
-        NSString *path = ZHNALogExport();
-        ZHNARepresent(window, ^{
-            NSString *m = path ? [NSString stringWithFormat:@"已保存到：\n%@", path] : @"保存失败";
-            id done = ZHNAMakeAlert(@"导出诊断日志", m);
-            id ok = ZHNAMakeAction(@"好", ZHNA_ACTION_CANCEL, ^(id x) { gPanelVisible = NO; });
-            if (ok) [(id<ZHNAUIShim>)done addAction:ok];
-            ZHNAPresent(window, done);
-        });
-    });
-    if (exportLog) [(id<ZHNAUIShim>)alert addAction:exportLog];
-
-    id reset = ZHNAMakeAction(@"恢复默认设置", ZHNA_ACTION_DESTRUCTIVE, ^(id a) {
-        ZHNAConfigResetToDefault();
-        gPanelVisible = NO;
-    });
-    if (reset) [(id<ZHNAUIShim>)alert addAction:reset];
-
-    id close = ZHNAMakeAction(@"关闭", ZHNA_ACTION_CANCEL, ^(id a) {
-        gPanelVisible = NO;
-    });
-    if (close) [(id<ZHNAUIShim>)alert addAction:close];
-
-    ZHNAPresent(window, alert);
-}
-
-#pragma mark - 触发方式
-
-static void ZHNAInstallFloatingButton(void);
-
-/// 在知乎界面放一个可拖动的小圆钮，轻点即呼出设置面板。
-/// 比手势可靠：不依赖手势识别、不和知乎自身滑动/长按冲突。
-void ZHNAInstallSettingsPanel(void) {
-    ZHNAInstallFloatingButton();
-}
-
-#pragma mark - 对外公开入口
-
-static id ZHNAKeyWindow(void) {
-    Class appCls = ZHNAClass("UIApplication");
-    if (appCls == Nil) return nil;
-    id (*getApp)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
-    id app = getApp(appCls, sel_registerName("sharedApplication"));
-    if (app == nil) return nil;
-
-    id (*getObj)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
-    id keyWindow = getObj(app, sel_registerName("keyWindow"));
-    if (keyWindow != nil) return keyWindow;
-
-    // iOS 13+ keyWindow 可能取不到，退回 windows 列表最后一个
-    id windows = getObj(app, sel_registerName("windows"));
-    if (windows != nil && [windows respondsToSelector:@selector(lastObject)]) {
-        return [windows lastObject];
-    }
-    return nil;
-}
-
+/// 在任何时机呼出主设置面板
 void ZHNAOpenSettingsPanel(void) {
     if (gPanelVisible) return;
     id window = ZHNAKeyWindow();
@@ -214,71 +564,42 @@ void ZHNAOpenSettingsPanel(void) {
         ZHNALog(@"呼出设置面板失败：取不到 keyWindow");
         return;
     }
-    ZHNAShowMainPanel(window);
+    ZHNABuildAndShowPanel(window);
 }
 
-#pragma mark - 悬浮按钮（可拖动，轻点呼出设置面板）
-
-// 新 SDK（Xcode16 / iOS18）要求 objc_msgSend 必须显式转型后才能带参数调用，
-// 否则报 "too many arguments"。这里统一用一组小工具函数，避免逐处强转。
-static inline id ZHNASend0(id o, SEL s) { return ((id (*)(id, SEL))objc_msgSend)(o, s); }
-static inline id ZHNASend1(id o, SEL s, id a) { return ((id (*)(id, SEL, id))objc_msgSend)(o, s, a); }
-static inline id ZHNASend2(id o, SEL s, id a, id b) { return ((id (*)(id, SEL, id, id))objc_msgSend)(o, s, a, b); }
-static inline void ZHNAVoid1(id o, SEL s, id a) { ((void (*)(id, SEL, id))objc_msgSend)(o, s, a); }
-static inline void ZHNAVoid2(id o, SEL s, id a, id b) { ((void (*)(id, SEL, id, id))objc_msgSend)(o, s, a, b); }
-static inline void ZHNAVoidB(id o, SEL s, BOOL b) { ((void (*)(id, SEL, BOOL))objc_msgSend)(o, s, b); }
-static inline void ZHNAVoidF(id o, SEL s, CGFloat f) { ((void (*)(id, SEL, CGFloat))objc_msgSend)(o, s, f); }
-static inline CGPoint ZHNAGetPoint(id o, SEL s) { return ((CGPoint (*)(id, SEL))objc_msgSend)(o, s); }
-static inline CGPoint ZHNAGetPoint1(id o, SEL s, id a) { return ((CGPoint (*)(id, SEL, id))objc_msgSend)(o, s, a); }
-static inline CGRect ZHNAGetRect(id o, SEL s) { return ((CGRect (*)(id, SEL))objc_msgSend)(o, s); }
-static inline void ZHNASetPoint(id o, SEL s, CGPoint p) { ((void (*)(id, SEL, CGPoint))objc_msgSend)(o, s, p); }
-static inline void ZHNASetRect(id o, SEL s, CGRect r) { ((void (*)(id, SEL, CGRect))objc_msgSend)(o, s, r); }
-static inline NSInteger ZHNAInt0(id o, SEL s) { return ((NSInteger (*)(id, SEL))objc_msgSend)(o, s); }
-static inline double ZHNADouble0(id o, SEL s) { return ((double (*)(id, SEL))objc_msgSend)(o, s); }
-
-static BOOL gFloatingInstalled = NO;
-static BOOL gFloatingRetryScheduled = NO;
-static CGPoint gBtnStartCenter;
-
-static id ZHNACString(const char *s) {
-    Class cls = ZHNAClass("NSString");
-    if (cls == Nil) return nil;
-    return ((id (*)(id, SEL, const char *))objc_msgSend)(cls,
-            sel_registerName("stringWithUTF8String:"), s);
+/// 安装悬浮按钮 + 摇一摇拦截
+void ZHNAInstallSettingsPanel(void) {
+    ZHNAInstallMotionGuard();      // 拦截知乎原生摇一摇跳广告
+    ZHNAInstallFloatingButton();   // 安装可拖动悬浮按钮
 }
 
-static id ZHNAColor(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
-    Class cls = ZHNAClass("UIColor");
-    if (cls == Nil) return nil;
-    return ((id (*)(id, SEL, CGFloat, CGFloat, CGFloat, CGFloat))objc_msgSend)(
-        cls, sel_registerName("colorWithRed:green:blue:alpha:"), r, g, b, a);
-}
+#pragma mark - 悬浮按钮（保留不变）
 
 static void ZHNASaveButtonCenter(CGPoint c) {
     Class cls = ZHNAClass("NSUserDefaults");
     if (cls == Nil) return;
-    id ud = ZHNASend0(cls, sel_registerName("standardUserDefaults"));
+    id ud = ZS0(cls, sel_registerName("standardUserDefaults"));
     if (ud == nil) return;
     id str = ((id (*)(id, SEL, id, double, double))objc_msgSend)(
         ZHNAClass("NSString"), sel_registerName("stringWithFormat:"),
-        ZHNACString("%f,%f"), (double)c.x, (double)c.y);
-    ZHNAVoid2(ud, sel_registerName("setObject:forKey:"), str, ZHNACString("ZHNAFloatBtnCenter"));
-    ZHNASend0(ud, sel_registerName("synchronize"));
+        ZStr("%f,%f"), (double)c.x, (double)c.y);
+    ZV2(ud, sel_registerName("setObject:forKey:"), str, ZStr("ZHNAFloatBtnCenter"));
+    ZS0(ud, sel_registerName("synchronize"));
 }
 
 static CGPoint ZHNALoadButtonCenter(void) {
     Class cls = ZHNAClass("NSUserDefaults");
     if (cls == Nil) return (CGPoint){0, 0};
-    id ud = ZHNASend0(cls, sel_registerName("standardUserDefaults"));
+    id ud = ZS0(cls, sel_registerName("standardUserDefaults"));
     if (ud == nil) return (CGPoint){0, 0};
-    id str = ZHNASend1(ud, sel_registerName("objectForKey:"), ZHNACString("ZHNAFloatBtnCenter"));
+    id str = ZS1(ud, sel_registerName("objectForKey:"), ZStr("ZHNAFloatBtnCenter"));
     if (str == nil) return (CGPoint){0, 0};
-    id parts = ZHNASend1(str, sel_registerName("componentsSeparatedByString:"), ZHNACString(","));
-    if (ZHNAInt0(parts, sel_registerName("count")) != 2) return (CGPoint){0, 0};
+    id parts = ZS1(str, sel_registerName("componentsSeparatedByString:"), ZStr(","));
+    if (ZGI(parts, sel_registerName("count")) != 2) return (CGPoint){0, 0};
     id xstr = ((id (*)(id, SEL, NSInteger))objc_msgSend)(parts, sel_registerName("objectAtIndex:"), 0);
     id ystr = ((id (*)(id, SEL, NSInteger))objc_msgSend)(parts, sel_registerName("objectAtIndex:"), 1);
-    CGFloat x = (CGFloat)ZHNADouble0(xstr, sel_registerName("doubleValue"));
-    CGFloat y = (CGFloat)ZHNADouble0(ystr, sel_registerName("doubleValue"));
+    CGFloat x = (CGFloat)ZGD(xstr, sel_registerName("doubleValue"));
+    CGFloat y = (CGFloat)ZGD(ystr, sel_registerName("doubleValue"));
     return (CGPoint){x, y};
 }
 
@@ -286,11 +607,8 @@ static void zhna_onPan(id self, SEL _cmd, id gesture);
 static void zhna_onTap(id self, SEL _cmd, id gesture);
 
 static void zhna_onTap(id self, SEL _cmd, id gesture) {
-    @try {
-        ZHNAOpenSettingsPanel();
-    } @catch (NSException *e) {
-        ZHNALog(@"悬浮按钮轻点失败: %@", e);
-    }
+    @try { ZHNAOpenSettingsPanel(); }
+    @catch (NSException *e) { ZHNALog(@"悬浮按钮轻点失败: %@", e); }
 }
 
 static id ZHNAFloatingTarget(void) {
@@ -305,39 +623,39 @@ static id ZHNAFloatingTarget(void) {
         class_addMethod(cls, sel_registerName("zhna_onTap:"),
                         (IMP)zhna_onTap, "v@:@");
         objc_registerClassPair(cls);
-        target = ZHNASend0(cls, sel_registerName("new"));
+        target = ZS0(cls, sel_registerName("new"));
     });
     return target;
 }
 
 static void zhna_onPan(id self, SEL _cmd, id gesture) {
-    NSInteger state = ZHNAInt0(gesture, sel_registerName("state"));
-    id btn = ZHNASend0(gesture, sel_registerName("view"));
+    NSInteger state = ZGI(gesture, sel_registerName("state"));
+    id btn = ZS0(gesture, sel_registerName("view"));
     if (btn == nil) return;
     id window = ZHNAKeyWindow();
-    if (window == nil) window = ZHNASend0(btn, sel_registerName("superview"));
+    if (window == nil) window = ZS0(btn, sel_registerName("superview"));
     if (window == nil) return;
 
     if (state == 1) {
-        gBtnStartCenter = ZHNAGetPoint(btn, sel_registerName("center"));
+        gBtnStartCenter = ZGP(btn, sel_registerName("center"));
     } else if (state == 2) {
-        CGPoint t = ZHNAGetPoint1(gesture, sel_registerName("translationInView:"), window);
+        CGPoint t = ZGP1(gesture, sel_registerName("translationInView:"), window);
         CGPoint nc = (CGPoint){ gBtnStartCenter.x + t.x, gBtnStartCenter.y + t.y };
-        CGRect b = ZHNAGetRect(window, sel_registerName("bounds"));
+        CGRect b = ZGR(window, sel_registerName("bounds"));
         CGFloat half = 24;
         if (nc.x < half) nc.x = half;
         if (nc.x > b.size.width - half) nc.x = b.size.width - half;
         if (nc.y < half) nc.y = half;
         if (nc.y > b.size.height - half) nc.y = b.size.height - half;
-        ZHNASetPoint(btn, sel_registerName("setCenter:"), nc);
-        ZHNAVoid1(window, sel_registerName("bringSubviewToFront:"), btn);
+        ZVP(btn, sel_registerName("setCenter:"), nc);
+        ZV1(window, sel_registerName("bringSubviewToFront:"), btn);
     } else if (state == 3 || state == 4) {
-        CGPoint t = ZHNAGetPoint1(gesture, sel_registerName("translationInView:"), window);
-        CGPoint c = ZHNAGetPoint(btn, sel_registerName("center"));
+        CGPoint t = ZGP1(gesture, sel_registerName("translationInView:"), window);
+        CGPoint c = ZGP(btn, sel_registerName("center"));
         if (t.x * t.x + t.y * t.y > 400) {
-            ZHNASaveButtonCenter(c);   // 拖动：仅记忆位置
+            ZHNASaveButtonCenter(c);
         } else {
-            ZHNAOpenSettingsPanel();   // 位移极小：按轻点兜底
+            ZHNAOpenSettingsPanel();
         }
     }
 }
@@ -359,44 +677,42 @@ static void ZHNAInstallFloatingButton(void) {
     @try {
         Class btnCls = ZHNAClass("UIButton");
         if (btnCls == Nil) return;
-        id btn = ZHNASend0(btnCls, sel_registerName("new"));
+        id btn = ZS0(btnCls, sel_registerName("new"));
         if (btn == nil) return;
 
-        ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(btn, sel_registerName("setTitle:forState:"), ZHNACString("去"), 0);
-        ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(btn, sel_registerName("setTitleColor:forState:"), ZHNAColor(1, 1, 1, 1), 0);
-        ZHNAVoid1(btn, sel_registerName("setBackgroundColor:"), ZHNAColor(0.08, 0.08, 0.08, 0.55));
-        ZHNAVoidB(btn, sel_registerName("setUserInteractionEnabled:"), (BOOL)YES);
-        ZHNAVoidB(btn, sel_registerName("setClipsToBounds:"), (BOOL)YES);
+        ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(btn, sel_registerName("setTitle:forState:"), ZStr("去"), 0);
+        ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(btn, sel_registerName("setTitleColor:forState:"), ZColor(1, 1, 1, 1), 0);
+        ZV1(btn, sel_registerName("setBackgroundColor:"), ZColor(0.08, 0.08, 0.08, 0.55));
+        ZVB(btn, sel_registerName("setUserInteractionEnabled:"), YES);
+        ZVB(btn, sel_registerName("setClipsToBounds:"), YES);
 
         CGFloat size = 48;
-        ZHNASetRect(btn, sel_registerName("setFrame:"), (CGRect){{0, 0}, {size, size}});
-        id layer = ZHNASend0(btn, sel_registerName("layer"));
-        ZHNAVoidF(layer, sel_registerName("setCornerRadius:"), (CGFloat)(size / 2));
-        ZHNAVoidB(layer, sel_registerName("setMasksToBounds:"), (BOOL)YES);
+        ZVR(btn, sel_registerName("frame:"), (CGRect){{0, 0}, {size, size}});
+        id layer = ZS0(btn, sel_registerName("layer"));
+        ZVF(layer, sel_registerName("setCornerRadius:"), (CGFloat)(size / 2));
+        ZVB(layer, sel_registerName("setMasksToBounds:"), YES);
 
         CGPoint c = ZHNALoadButtonCenter();
         if (c.x <= 0 || c.y <= 0) {
-            CGRect b = ZHNAGetRect(window, sel_registerName("bounds"));
+            CGRect b = ZGR(window, sel_registerName("bounds"));
             c = (CGPoint){ b.size.width - size / 2 - 8, b.size.height / 2 };
         }
-        ZHNASetPoint(btn, sel_registerName("setCenter:"), c);
+        ZVP(btn, sel_registerName("setCenter:"), c);
 
         Class panCls = ZHNAClass("UIPanGestureRecognizer");
-        id pan = ZHNASend0(panCls, sel_registerName("new"));
+        id pan = ZS0(panCls, sel_registerName("new"));
         ((void (*)(id, SEL, id, SEL))objc_msgSend)(pan, sel_registerName("addTarget:action:"),
                   ZHNAFloatingTarget(), sel_registerName("zhna_onPan:"));
-        ZHNAVoid1(btn, sel_registerName("addGestureRecognizer:"), pan);
+        ZV1(btn, sel_registerName("addGestureRecognizer:"), pan);
 
-        // 独立的轻点识别器：pan 在纯轻点时会进入 Failed 状态而不回调，
-        // 导致“要点很多次”，因此轻点单独用 tap 识别器，最稳。
         Class tapCls = ZHNAClass("UITapGestureRecognizer");
-        id tap = ZHNASend0(tapCls, sel_registerName("new"));
+        id tap = ZS0(tapCls, sel_registerName("new"));
         ((void (*)(id, SEL, id, SEL))objc_msgSend)(tap, sel_registerName("addTarget:action:"),
                   ZHNAFloatingTarget(), sel_registerName("zhna_onTap:"));
-        ZHNAVoid1(btn, sel_registerName("addGestureRecognizer:"), tap);
+        ZV1(btn, sel_registerName("addGestureRecognizer:"), tap);
 
-        ZHNAVoid1(window, sel_registerName("addSubview:"), btn);
-        ZHNAVoid1(window, sel_registerName("bringSubviewToFront:"), btn);
+        ZV1(window, sel_registerName("addSubview:"), btn);
+        ZV1(window, sel_registerName("bringSubviewToFront:"), btn);
 
         gFloatingInstalled = YES;
         ZHNALog(@"悬浮按钮已安装（轻点呼出设置，可拖动，位置已记忆）");
